@@ -101,7 +101,7 @@ Python interpreters:
 * ``proto_python``: Path to Python interpreter with ProtoMotions installed
 * ``pyroki_python``: Path to Python interpreter with PyRoki installed
 * ``amass_pt_file``: Path to packaged AMASS MotionLib .pt file (outputs saved in same directory)
-* ``robot_type``: Target robot (``g1`` or ``h1_2``)
+* ``robot_type``: Target robot (``g1``, ``h1_2``, or ``astro``)
 * ``skip_freq``: (Optional) Skip every N motions (default: 1 = all motions)
 
 **Example:**
@@ -121,6 +121,13 @@ Python interpreters:
        ~/miniconda3/envs/pyroki/bin/python \
        /path/to/amass_train.pt \
        h1_2 1
+
+   # Retarget all motions to Astro
+   ./scripts/retarget_amass_to_robot.sh \
+       ~/miniconda3/envs/protomotions/bin/python \
+       ~/miniconda3/envs/pyroki/bin/python \
+       /path/to/amass_train.pt \
+       astro 1
 
 The script runs all steps automatically and outputs the final MotionLib ``.pt`` file.
 
@@ -151,7 +158,7 @@ the dedicated script:
 * ``pyroki_python``: Path to Python interpreter with PyRoki installed
 * ``motion_file``: Path to input ``.motion`` file (SMPL format)
 * ``output_dir``: Directory for all outputs
-* ``robot_type``: Target robot (``g1`` or ``h1_2``)
+* ``robot_type``: Target robot (``g1``, ``h1_2``, or ``astro``)
 
 **Example:**
 
@@ -291,7 +298,7 @@ Convert retargeted motions to ProtoMotions format, incorporating the source cont
 
 * ``--retargeted-motion-dir``: Directory with retargeted ``.npz`` files
 * ``--output-dir``: Output directory for ``.motion`` files
-* ``--robot-type``: Target robot (``g1`` or ``h1_2``)
+* ``--robot-type``: Target robot (``g1``, ``h1_2``, or ``astro``)
 * ``--contact-labels-dir``: Directory with contact labels from Step 3
 * ``--apply-motion-filter``: Apply smoothing filter to reduce jitter
 * ``--force-remake``: Overwrite existing files

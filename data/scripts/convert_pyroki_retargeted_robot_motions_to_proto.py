@@ -13,24 +13,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import glob
 import os
 from pathlib import Path
-import glob
 from typing import Optional
+
+import numpy as np
 import torch
 import typer
-import numpy as np
+from motion_filter import passes_exclude_motion_filter
 from tqdm import tqdm
 
 from protomotions.components.pose_lib import (
-    extract_kinematic_info,
-    fk_from_transforms_with_velocities,
     compute_cartesian_velocity,
-    extract_transforms_from_qpos,
+    extract_kinematic_info,
     extract_qpos_from_transforms,
+    extract_transforms_from_qpos,
+    fk_from_transforms_with_velocities,
 )
-from protomotions.robot_configs.factory import robot_config
-from motion_filter import passes_exclude_motion_filter
 
 app = typer.Typer(pretty_exceptions_enable=False)
 
@@ -233,28 +233,42 @@ def main(
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Map robot types to their MJCF filenames
-    robot_mjcf_mapping = {
-        "g1": "g1_bm_box_feet.xml",
-        "h1_2": "h1_2.xml",
+    # Map robot types to their MJCF filenames and foot bodies.
+    robot_metadata = {
+        "g1": {
+            "mjcf": "g1_bm_box_feet.xml",
+            "left_foot": "left_ankle_roll_link",
+            "right_foot": "right_ankle_roll_link",
+        },
+        "h1_2": {
+            "mjcf": "h1_2.xml",
+            "left_foot": "left_ankle_roll_link",
+            "right_foot": "right_ankle_roll_link",
+        },
+        "astro": {
+            "mjcf": "astro_v0.1.xml",
+            "left_foot": "left_ankle_roll_link",
+            "right_foot": "right_ankle_roll_link",
+        },
     }
 
+    robot_info = robot_metadata.get(robot_type)
+    if robot_info is None:
+        raise ValueError(
+            f"Unsupported robot_type '{robot_type}'. Expected one of: {', '.join(sorted(robot_metadata))}"
+        )
+
     # Get kinematic info for the specified robot
-    mjcf_filename = robot_mjcf_mapping.get(robot_type, f"{robot_type}.xml")
+    mjcf_filename = robot_info["mjcf"]
     mjcf_path = f"protomotions/data/assets/mjcf/{mjcf_filename}"
     if not os.path.exists(mjcf_path):
         raise FileNotFoundError(f"MJCF file not found at {mjcf_path}")
 
     kinematic_info = extract_kinematic_info(mjcf_path)
 
-    # Get robot config to find foot link names (for contact labeling)
-    robot_cfg = robot_config(robot_type)
-    left_foot_name = robot_cfg.common_naming_to_robot_body_names[
-        "all_left_foot_bodies"
-    ][0]
-    right_foot_name = robot_cfg.common_naming_to_robot_body_names[
-        "all_right_foot_bodies"
-    ][0]
+    # Use explicit foot link names so conversion doesn't depend on simulator robot config registration.
+    left_foot_name = robot_info["left_foot"]
+    right_foot_name = robot_info["right_foot"]
 
     # Find foot body indices
     body_names = kinematic_info.body_names

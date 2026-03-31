@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 The ProtoMotions Developers
 # SPDX-License-Identifier: Apache-2.0
 #
-# Convenience script to retarget AMASS SMPL motions to a robot (G1 or H1_2)
+# Convenience script to retarget AMASS SMPL motions to a robot (G1, H1_2, or Astro)
 #
 # IMPORTANT: ProtoMotions and PyRoki require separate Python environments.
 # You must provide paths to both Python interpreters.
@@ -19,7 +19,7 @@
 #   proto_python:  Path to Python interpreter with ProtoMotions installed
 #   pyroki_python: Path to Python interpreter with PyRoki installed
 #   amass_pt_file: Path to packaged AMASS MotionLib .pt file (outputs saved in same directory)
-#   robot_type:    Target robot: 'g1' or 'h1_2'
+#   robot_type:    Target robot: 'g1', 'h1_2', or 'astro'
 #   skip_freq:     (Optional) Skip every N motions for subset processing (default: 1 = all motions)
 
 set -e  # Exit on error
@@ -32,7 +32,7 @@ if [ $# -lt 4 ]; then
     echo "  proto_python   Path to Python interpreter with ProtoMotions installed"
     echo "  pyroki_python  Path to Python interpreter with PyRoki installed"
     echo "  amass_pt_file  Path to packaged AMASS MotionLib .pt file (outputs saved in same dir)"
-    echo "  robot_type     Target robot: 'g1' or 'h1_2'"
+    echo "  robot_type     Target robot: 'g1', 'h1_2', or 'astro'"
     echo "  skip_freq      (Optional) Skip every N motions (default: 1 = all motions)"
     echo ""
     echo "Example:"
@@ -47,8 +47,8 @@ ROBOT_TYPE="$4"
 SKIP_FREQ="${5:-1}"
 
 # Validate robot type
-if [ "$ROBOT_TYPE" != "g1" ] && [ "$ROBOT_TYPE" != "h1_2" ]; then
-    echo "Error: robot_type must be 'g1' or 'h1_2'"
+if [ "$ROBOT_TYPE" != "g1" ] && [ "$ROBOT_TYPE" != "h1_2" ] && [ "$ROBOT_TYPE" != "astro" ]; then
+    echo "Error: robot_type must be 'g1', 'h1_2', or 'astro'"
     exit 1
 fi
 
@@ -100,44 +100,68 @@ $PROTO_PYTHON data/scripts/extract_retargeting_input_keypoints_from_packaged_mot
 # Step 2: Run PyRoki retargeting (uses PyRoki)
 echo ""
 echo "[Step 2/5] Running PyRoki retargeting to ${ROBOT_TYPE^^}..."
-if [ "$ROBOT_TYPE" == "g1" ]; then
-    $PYROKI_PYTHON pyroki/batch_retarget_to_g1_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --output-dir "$RETARGETED_DIR" \
-        --no-visualize \
-        --skip-existing
-else
-    $PYROKI_PYTHON pyroki/batch_retarget_to_h1_2_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --output-dir "$RETARGETED_DIR" \
-        --no-visualize \
-        --skip-existing
-fi
+case "$ROBOT_TYPE" in
+    g1)
+        $PYROKI_PYTHON pyroki/batch_retarget_to_g1_from_keypoints.py \
+            --subsample-factor 1 \
+            --keypoints-folder-path "$KEYPOINTS_DIR" \
+            --source-type smpl \
+            --output-dir "$RETARGETED_DIR" \
+            --no-visualize \
+            --skip-existing
+        ;;
+    h1_2)
+        $PYROKI_PYTHON pyroki/batch_retarget_to_h1_2_from_keypoints.py \
+            --subsample-factor 1 \
+            --keypoints-folder-path "$KEYPOINTS_DIR" \
+            --source-type smpl \
+            --output-dir "$RETARGETED_DIR" \
+            --no-visualize \
+            --skip-existing
+        ;;
+    astro)
+        $PYROKI_PYTHON pyroki/batch_retarget_to_astro_from_keypoints.py \
+            --subsample-factor 1 \
+            --keypoints-folder-path "$KEYPOINTS_DIR" \
+            --source-type smpl \
+            --output-dir "$RETARGETED_DIR" \
+            --no-visualize \
+            --skip-existing
+        ;;
+esac
 
 # Step 3: Extract contact labels from source motions (uses PyRoki)
 echo ""
 echo "[Step 3/5] Extracting foot contact labels from source SMPL motions..."
-if [ "$ROBOT_TYPE" == "g1" ]; then
-    $PYROKI_PYTHON pyroki/batch_retarget_to_g1_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --save-contacts-only \
-        --contacts-dir "$CONTACTS_DIR" \
-        --skip-existing
-else
-    $PYROKI_PYTHON pyroki/batch_retarget_to_h1_2_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --save-contacts-only \
-        --contacts-dir "$CONTACTS_DIR" \
-        --skip-existing
-fi
+case "$ROBOT_TYPE" in
+    g1)
+        $PYROKI_PYTHON pyroki/batch_retarget_to_g1_from_keypoints.py \
+            --subsample-factor 1 \
+            --keypoints-folder-path "$KEYPOINTS_DIR" \
+            --source-type smpl \
+            --save-contacts-only \
+            --contacts-dir "$CONTACTS_DIR" \
+            --skip-existing
+        ;;
+    h1_2)
+        $PYROKI_PYTHON pyroki/batch_retarget_to_h1_2_from_keypoints.py \
+            --subsample-factor 1 \
+            --keypoints-folder-path "$KEYPOINTS_DIR" \
+            --source-type smpl \
+            --save-contacts-only \
+            --contacts-dir "$CONTACTS_DIR" \
+            --skip-existing
+        ;;
+    astro)
+        $PYROKI_PYTHON pyroki/batch_retarget_to_astro_from_keypoints.py \
+            --subsample-factor 1 \
+            --keypoints-folder-path "$KEYPOINTS_DIR" \
+            --source-type smpl \
+            --save-contacts-only \
+            --contacts-dir "$CONTACTS_DIR" \
+            --skip-existing
+        ;;
+esac
 
 # Step 4: Convert to ProtoMotions format with contact labels (uses ProtoMotions)
 echo ""
