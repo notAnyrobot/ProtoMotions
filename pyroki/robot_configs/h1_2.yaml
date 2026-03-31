@@ -41,3 +41,8 @@ torso_link_name: torso_link
 torso_aux_offset: [0.3, 0.0, 0.0]
 downweight_hips: true
 joints_to_move_less: []
+display_pose_preset:
+  left_shoulder_roll_joint: 1.5708
+  right_shoulder_roll_joint: -1.5708
+  left_elbow_joint: 1.5708
+  right_elbow_joint: 1.5708

@@ -44,3 +44,8 @@ joints_to_move_less:
   - waist_roll_joint
   - right_wrist_pitch_joint
   - left_wrist_pitch_joint
+display_pose_preset:
+  left_shoulder_roll_joint: 1.5708
+  right_shoulder_roll_joint: -1.5708
+  left_elbow_joint: 1.5708
+  right_elbow_joint: 1.5708

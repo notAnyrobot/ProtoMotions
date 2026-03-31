@@ -743,12 +743,10 @@ def make_solve_retargeting(
 
 def _load_robot(
     robot_config: dict[str, Any],
-    urdf_override: str | None,
-    mesh_override: str | None,
 ):
     _, _, _, _, _, pk, yourdfpy = _require_pyroki_runtime()
-    urdf_path = urdf_override or robot_config["urdf_path"]
-    mesh_dir = mesh_override or robot_config["mesh_dir"]
+    urdf_path = robot_config["urdf_path"]
+    mesh_dir = robot_config["mesh_dir"]
     urdf = yourdfpy.URDF.load(urdf_path, mesh_dir=mesh_dir)
     robot = pk.Robot.from_urdf(urdf)
     robot_coll = None
@@ -1013,18 +1011,6 @@ def parse_args(default_robot_config: str | None = None) -> argparse.Namespace:
         help="Directory to save retargeted motions in non-visualize mode.",
     )
     parser.add_argument(
-        "--urdf-path",
-        type=str,
-        default=None,
-        help="Optional override for the robot URDF path.",
-    )
-    parser.add_argument(
-        "--mesh-dir",
-        type=str,
-        default=None,
-        help="Optional override for the robot mesh directory.",
-    )
-    parser.add_argument(
         "--subsample-factor",
         type=int,
         default=1,
@@ -1081,7 +1067,7 @@ def main(default_robot_config: str | None = None):
         return
 
     _, jnp, _, _, _, _, _ = _require_pyroki_runtime()
-    urdf, robot, robot_coll = _load_robot(robot_config, args.urdf_path, args.mesh_dir)
+    urdf, robot, robot_coll = _load_robot(robot_config)
     link_names = list(robot.links.names)
     human_retarget_names, joint_retarget_indices = get_humanoid_retarget_indices(
         link_names, robot_config

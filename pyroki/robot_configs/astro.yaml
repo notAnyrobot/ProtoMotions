@@ -1,31 +1,64 @@
 name: astro
-urdf_path: ../../protomotions/data/assets/urdf/for_retargeting/h1_2.urdf
-mesh_dir: ../../protomotions/data/assets/mesh/H1_2
+urdf_path: ../../protomotions/data/assets/urdf/for_retargeting/astro_v1.urdf
+mesh_dir: ../../protomotions/data/assets/mesh/astro
 keypoint_mapping:
-  - [pelvis, pelvis]
-  - [left_hip, left_hip_yaw_link]
-  - [right_hip, right_hip_yaw_link]
-  - [left_knee, left_knee_link]
-  - [right_knee, right_knee_link]
-  - [left_ankle, left_ankle_roll_link]
-  - [right_ankle, right_ankle_roll_link]
-  - [left_foot, left_foot_link]
-  - [right_foot, right_foot_link]
-  - [left_shoulder, left_shoulder_roll_link]
-  - [right_shoulder, right_shoulder_roll_link]
-  - [left_elbow, left_elbow_link]
-  - [right_elbow, right_elbow_link]
-  - [left_wrist, left_wrist_yaw_link]
-  - [right_wrist, right_wrist_yaw_link]
+- - pelvis
+  - pelvis
+- - left_hip
+  - left_hip_pitch_link
+- - right_hip
+  - right_hip_pitch_link
+- - left_knee
+  - left_knee_link
+- - right_knee
+  - right_knee_link
+- - left_ankle
+  - left_ankle_roll_link
+- - right_ankle
+  - right_ankle_roll_link
+- - left_foot
+  - left_foot_link
+- - right_foot
+  - right_foot_link
+- - left_shoulder
+  - left_shoulder_pitch_link
+- - right_shoulder
+  - right_shoulder_pitch_link
+- - left_elbow
+  - left_elbow_link
+- - right_elbow
+  - right_elbow_link
+- - left_wrist
+  - left_wrist_yaw_link
+- - right_wrist
+  - right_wrist_yaw_link
 scale_factors:
   smpl:
-    root: [1.1, 1.1, 1.1]
-    lower_body: [1.1, 1.1, 1.1]
-    upper_body: [1.1, 1.1, 1.0]
+    root:
+    - 1.0
+    - 1.0
+    - 1.0
+    lower_body:
+    - 1.0
+    - 1.2
+    - 0.8
+    upper_body:
+    - 0.9
+    - 0.9
+    - 0.8
   rigv1:
-    root: [1.0, 1.0, 1.0]
-    lower_body: [1.0, 1.0, 1.0]
-    upper_body: [1.0, 1.0, 0.9]
+    root:
+    - 1.0
+    - 1.0
+    - 1.0
+    lower_body:
+    - 1.0
+    - 1.2
+    - 0.8
+    upper_body:
+    - 0.9
+    - 0.9
+    - 0.8
 weights:
   local_alignment: 1.0
   global_alignment: 3.0
@@ -36,8 +69,22 @@ weights:
   joint_vel_limit: 50.0
   foot_contact: 30.0
   foot_tilt: 1.0
-hand_aux_offset: [0.0, 0.0, 0.2]
+hand_aux_offset:
+- 0.0
+- 0.0
+- 0.12
 torso_link_name: torso_link
-torso_aux_offset: [0.3, 0.0, 0.0]
+torso_aux_offset:
+- 0.12
+- 0.0
+- -0.3
 downweight_hips: true
-joints_to_move_less: []
+joints_to_move_less:
+- waist_roll_joint
+- right_wrist_pitch_joint
+- left_wrist_pitch_joint
+display_pose_preset:
+  left_shoulder_roll_joint: 1.5708
+  right_shoulder_roll_joint: -1.5708
+  left_elbow_joint: 1.5708
+  right_elbow_joint: 1.5708
