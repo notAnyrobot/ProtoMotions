@@ -6,10 +6,8 @@
     <!-- <joint damping="0.001" armature="0.01" frictionloss="0.1"/> -->
     <joint actuatorfrclimited="true"  armature="0.01" frictionloss="0.1" damping="0.001"/>
 
-
     <default class="visual">
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.753 0.753 0.753 1"/>
-      
     </default>
 
     <default class="collision">

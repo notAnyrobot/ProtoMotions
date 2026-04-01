@@ -89,7 +89,6 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-
 CONVERTER_SCRIPT = os.path.join(os.path.dirname(__file__), "convert_mjcf_to_usd.py")
 PATCH_SCRIPT = os.path.join(os.path.dirname(__file__), "patch_usd_visual_meshes.py")
 
@@ -207,16 +206,23 @@ def strip_mjcf(input_path: str, output_path: str) -> list:
     return removed
 
 
-def patch_usda(usda_path: str, desired_prim_name: str) -> None:
+def _sanitize_stem_for_isaaclab(stem: str) -> str:
+    """Return a filename stem that avoids IsaacLab's multi-dot MJCF bug."""
+    return stem.replace(".", "_")
+
+
+def patch_usda(
+    usda_path: str, generated_prim_name: str, desired_prim_name: str
+) -> None:
     """Post-process the generated USDA to fix known issues.
 
-    1. Replace any ``_cleaned`` suffix in prim names with the desired name.
+    1. Replace any generated ``_cleaned`` suffix in prim names with the desired name.
     2. Insert ``over "worldBody" (active = false)`` if not already present.
     """
     with open(usda_path) as f:
         content = f.read()
 
-    cleaned_name = desired_prim_name + "_cleaned"
+    cleaned_name = generated_prim_name + "_cleaned"
 
     if cleaned_name in content:
         content = content.replace(cleaned_name, desired_prim_name)
@@ -275,6 +281,7 @@ def main():
         sys.exit(1)
 
     stem = os.path.splitext(os.path.basename(input_path))[0]
+    output_stem = _sanitize_stem_for_isaaclab(stem)
 
     # Step 1: Verify the MJCF is flat
     issues = verify_mjcf_is_flat(input_path)
@@ -300,16 +307,22 @@ def main():
             "data",
             "assets",
             "usd",
-            stem,
+            output_stem,
         )
         output_dir = os.path.abspath(assets_root)
 
-    usda_name = f"{stem}.usda"
+    usda_name = f"{output_stem}.usda"
     usda_path = os.path.join(output_dir, usda_name)
     os.makedirs(output_dir, exist_ok=True)
 
+    # IsaacLab's MJCF importer crashes when the input basename contains more
+    # than one dot, so sanitize the temporary converter input path.
+    converter_stem = output_stem
+
     # Step 2: Strip <contact>, <sensor>, <tendon> into a temp file
-    cleaned_path = os.path.join(os.path.dirname(input_path), f"{stem}_cleaned.xml")
+    cleaned_path = os.path.join(
+        os.path.dirname(input_path), f"{converter_stem}_cleaned.xml"
+    )
     removed = strip_mjcf(input_path, cleaned_path)
     if removed:
         print(f"Stripped from MJCF: {', '.join(removed)}")
@@ -348,7 +361,9 @@ def main():
         sys.exit(result.returncode)
 
     # Step 4: Patch missing visual meshes into the base USD
-    base_usd_path = os.path.join(output_dir, "configuration", f"{stem}_base.usd")
+    base_usd_path = os.path.join(
+        output_dir, "configuration", f"{output_stem}_base.usd"
+    )
     if os.path.isfile(base_usd_path) and os.path.isfile(PATCH_SCRIPT):
         print("\nPatching missing visual meshes...")
         patch_cmd = [
@@ -369,7 +384,7 @@ def main():
 
     # Step 5: Patch the USDA
     if os.path.isfile(usda_path):
-        patch_usda(usda_path, stem)
+        patch_usda(usda_path, converter_stem, output_stem)
         print("\nPatched USDA: removed _cleaned suffix, added worldBody override.")
     else:
         print(f"\nWARNING: Expected USDA not found at {usda_path}", file=sys.stderr)

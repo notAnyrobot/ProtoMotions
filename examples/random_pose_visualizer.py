@@ -22,10 +22,10 @@ This tool visualizes random humanoid poses by:
 3. Displaying the poses with visualization markers on key body parts
 """
 
-from typing import Dict, List
 import argparse
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
+from typing import Dict, List
 
 # Parse arguments first (argparse is safe, doesn't import torch)
 parser = argparse.ArgumentParser(
@@ -41,9 +41,9 @@ parser.add_argument(
 parser.add_argument(
     "--robot",
     type=str,
-    choices=["g1", "rigv1", "smpl"],
+    choices=["g1", "rigv1", "astro", "smpl"],
     default="g1",
-    help="Robot to load (g1, rigv1, or smpl)",
+    help="Robot to load (g1, rigv1, astro, or smpl)",
 )
 parser.add_argument("--num_envs", type=int, default=1, help="Number of environments")
 parser.add_argument("--headless", action="store_true", help="Run in headless mode")
@@ -57,21 +57,23 @@ args = parser.parse_args()
 
 # Import simulator before torch - isaacgym/isaaclab must be imported before torch
 # This also returns AppLauncher if using isaaclab, None otherwise
-from protomotions.utils.simulator_imports import import_simulator_before_torch  # noqa: E402
+from protomotions.utils.simulator_imports import (  # noqa: E402
+    import_simulator_before_torch,
+)
 
 AppLauncher = import_simulator_before_torch(args.simulator)
 
 # Now safe to import everything else including torch
 import torch  # noqa: E402
-from protomotions.utils.hydra_replacement import get_class  # noqa: E402
 
+from protomotions.robot_configs.factory import robot_config  # noqa: E402
 from protomotions.simulator.base_simulator.config import (  # noqa: E402
-    VisualizationMarkerConfig,
     MarkerConfig,
     MarkerState,
+    VisualizationMarkerConfig,
 )
 from protomotions.simulator.factory import simulator_config  # noqa: E402
-from protomotions.robot_configs.factory import robot_config  # noqa: E402
+from protomotions.utils.hydra_replacement import get_class  # noqa: E402
 from protomotions.utils.rotations import quat_from_euler_xyz  # noqa: E402
 
 
@@ -97,6 +99,17 @@ ROBOT_SPECS = {
     ),
     "rigv1": RobotSpec(
         viz_bodies=["Hips", "Spine2", "LeftLeg", "RightLeg", "LeftFoot", "RightFoot"],
+    ),
+    "astro": RobotSpec(
+        viz_bodies=[
+            "pelvis",
+            "torso_link",
+            "head_link",
+            "left_ankle_roll_link",
+            "right_ankle_roll_link",
+            "left_wrist_yaw_link",
+            "right_wrist_yaw_link",
+        ],
     ),
     "smpl": RobotSpec(
         viz_bodies=["Pelvis", "L_Knee", "R_Knee", "L_Ankle", "R_Ankle"],

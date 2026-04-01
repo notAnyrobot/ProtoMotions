@@ -17,11 +17,11 @@
 # Supports normalized jerk, oscillation index, and purposeful jerk metrics
 # Uses threshold-based highlighting similar to the original visualizer
 
-from typing import Dict, List
 import argparse
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict, List
 
 FPS = 30
 
@@ -31,6 +31,7 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument(
     "--motion_files",
+    "--motion-files",
     type=str,
     nargs="+",
     required=True,
@@ -46,9 +47,9 @@ parser.add_argument(
 parser.add_argument(
     "--robot",
     type=str,
-    choices=["g1", "rigv1", "h1_2", "smpl", "soma23"],
+    choices=["g1", "rigv1", "h1_2", "astro", "smpl", "soma23"],
     default="g1",
-    help="Robot to load (g1, rigv1, h1_2, smpl, or soma23)",
+    help="Robot to load (g1, rigv1, h1_2, astro, smpl, or soma23)",
 )
 parser.add_argument("--headless", action="store_true", help="Run in headless mode")
 parser.add_argument(
@@ -98,33 +99,36 @@ args = parser.parse_args()
 
 # Import simulator before torch - isaacgym/isaaclab must be imported before torch
 # This also returns AppLauncher if using isaaclab, None otherwise
-from protomotions.utils.simulator_imports import import_simulator_before_torch  # noqa: E402
+from protomotions.utils.simulator_imports import (  # noqa: E402
+    import_simulator_before_torch,
+)
 
 AppLauncher = import_simulator_before_torch(args.simulator)
 
+import os  # noqa: E402
+
 # Now safe to import everything else including torch
 import torch  # noqa: E402
-from protomotions.utils.hydra_replacement import get_class  # noqa: E402
 
-from protomotions.simulator.base_simulator.config import (  # noqa: E402
-    VisualizationMarkerConfig,
-    MarkerConfig,
-    MarkerState,
-)
-from protomotions.simulator.factory import simulator_config  # noqa: E402
-from protomotions.robot_configs.factory import robot_config  # noqa: E402
-from protomotions.robot_configs.base import ControlType  # noqa: E402
 from protomotions.components.motion_lib import MotionLib  # noqa: E402
 from protomotions.components.scene_lib import (  # noqa: E402
-    SceneLib,
     MeshSceneObject,
-    Scene,
     ObjectOptions,
-    SceneLibConfig,
     ReplicationMethod,
+    Scene,
+    SceneLib,
+    SceneLibConfig,
     SubsetMethod,
 )
-import os  # noqa: E402
+from protomotions.robot_configs.base import ControlType  # noqa: E402
+from protomotions.robot_configs.factory import robot_config  # noqa: E402
+from protomotions.simulator.base_simulator.config import (  # noqa: E402
+    MarkerConfig,
+    MarkerState,
+    VisualizationMarkerConfig,
+)
+from protomotions.simulator.factory import simulator_config  # noqa: E402
+from protomotions.utils.hydra_replacement import get_class  # noqa: E402
 
 
 @dataclass
@@ -145,6 +149,17 @@ ROBOT_SPECS = {
     ),
     "h1_2": RobotSpec(
         viz_bodies=[],
+    ),
+    "astro": RobotSpec(
+        viz_bodies=[
+            "pelvis",
+            "torso_link",
+            "head_link",
+            "left_ankle_roll_link",
+            "right_ankle_roll_link",
+            "left_wrist_yaw_link",
+            "right_wrist_yaw_link",
+        ],
     ),
     "smpl": RobotSpec(
         viz_bodies=[],

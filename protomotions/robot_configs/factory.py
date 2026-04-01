@@ -49,6 +49,10 @@ def robot_config(robot_name: str, **updates) -> RobotConfig:
         from protomotions.robot_configs.h1_2 import H1_2RobotConfig
 
         config = H1_2RobotConfig()
+    elif robot_name == "astro":
+        from protomotions.robot_configs.astro import AstroRobotConfig
+
+        config = AstroRobotConfig()
     elif robot_name == "rigv1":
         from protomotions.robot_configs.rigv1 import Rigv1RobotConfig
 
