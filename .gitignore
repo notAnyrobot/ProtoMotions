@@ -20,3 +20,4 @@ data/smpl/*.pt
 !.claude/commands/
 .cursor/
 renders/
+tools/.retargeting_gui_config.json
