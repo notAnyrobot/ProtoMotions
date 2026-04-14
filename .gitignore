@@ -21,3 +21,13 @@ data/smpl/*.pt
 .cursor/
 renders/
 tools/.retargeting_gui_config.json
+
+
+# AI-generated content
+**/.copilot/
+**/.copilot-tracking/
+**/.github/
+**/.claude/
+**/.sisyphus/
+**/.opencode/
+**/openspec/
