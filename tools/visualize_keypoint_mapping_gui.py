@@ -65,7 +65,9 @@ AUX_OFFSET_GROUPS = ("hand_aux_offset", "torso_aux_offset")
 
 
 def _default_robot_config_path() -> Path:
-    return Path(__file__).resolve().parent / "robot_configs" / "g1.yaml"
+    return (
+        Path(__file__).resolve().parent.parent / "pyroki" / "robot_configs" / "g1.yaml"
+    )
 
 
 @dataclass
@@ -130,7 +132,9 @@ class GuiApp:
         style.theme_use("clam")
         style.configure("TLabel", background=self.bg_color, foreground=self.fg_color)
         style.configure("TFrame", background=self.bg_color)
-        style.configure("TLabelframe", background=self.bg_color, foreground=self.fg_color)
+        style.configure(
+            "TLabelframe", background=self.bg_color, foreground=self.fg_color
+        )
         style.configure("TButton", background=self.bg_color)
 
         # Main container with scrolling
@@ -179,7 +183,9 @@ class GuiApp:
         ttk.Button(config_inner, text="Browse", command=self._on_browse_config).pack(
             side=tk.LEFT, padx=(0, 6)
         )
-        ttk.Button(config_inner, text="Load", command=self._on_load_config).pack(side=tk.LEFT)
+        ttk.Button(config_inner, text="Load", command=self._on_load_config).pack(
+            side=tk.LEFT
+        )
 
         # ============= Source Type Section =============
         source_frame = ttk.LabelFrame(
@@ -207,7 +213,9 @@ class GuiApp:
         distance_row = ttk.Frame(source_frame)
         distance_row.pack(fill=tk.X)
 
-        ttk.Label(distance_row, text="Viewer Distance:", width=14).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(distance_row, text="Viewer Distance:", width=14).pack(
+            side=tk.LEFT, padx=(0, 6)
+        )
         self.distance_var = tk.DoubleVar(value=self.viewer_spacing)
         distance_scale = ttk.Scale(
             distance_row,
@@ -218,7 +226,9 @@ class GuiApp:
             command=self._on_distance_change,
         )
         distance_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-        self.distance_label = ttk.Label(distance_row, text=f"{self.viewer_spacing:.2f}", width=6)
+        self.distance_label = ttk.Label(
+            distance_row, text=f"{self.viewer_spacing:.2f}", width=6
+        )
         self.distance_label.pack(side=tk.LEFT)
 
         # ============= Scale Factors Section =============
@@ -229,7 +239,10 @@ class GuiApp:
 
         for row_idx, group_name in enumerate(SCALE_GROUPS):
             group_label = ttk.Label(
-                scale_frame, text=group_name, font=("TkDefaultFont", 9, "bold"), width=11
+                scale_frame,
+                text=group_name,
+                font=("TkDefaultFont", 9, "bold"),
+                width=11,
             )
             group_label.grid(row=row_idx * 4, column=0, sticky="w", padx=(0, 12))
 
@@ -238,7 +251,9 @@ class GuiApp:
                 self.slider_vars[(group_name, axis_idx)] = var
 
                 label = ttk.Label(scale_frame, text=f"├─ {axis_name.upper()}", width=11)
-                label.grid(row=row_idx * 4 + axis_idx + 1, column=0, sticky="w", padx=(14, 8))
+                label.grid(
+                    row=row_idx * 4 + axis_idx + 1, column=0, sticky="w", padx=(14, 8)
+                )
 
                 scale = ttk.Scale(
                     scale_frame,
@@ -251,7 +266,9 @@ class GuiApp:
                         self._update_scale_label(g),
                     ),
                 )
-                scale.grid(row=row_idx * 4 + axis_idx + 1, column=1, sticky="ew", padx=(0, 8))
+                scale.grid(
+                    row=row_idx * 4 + axis_idx + 1, column=1, sticky="ew", padx=(0, 8)
+                )
 
                 value_label = ttk.Label(scale_frame, text="1.00", width=5)
                 value_label.grid(row=row_idx * 4 + axis_idx + 1, column=2)
@@ -263,7 +280,9 @@ class GuiApp:
         scale_frame.columnconfigure(1, weight=1)
 
         # ============= Aux Offsets Section =============
-        aux_frame = ttk.LabelFrame(scrollable_frame, text="Aux Offsets (meters)", padding=12)
+        aux_frame = ttk.LabelFrame(
+            scrollable_frame, text="Aux Offsets (meters)", padding=12
+        )
         aux_frame.pack(fill=tk.X, padx=12, pady=6)
 
         for row_idx, aux_group in enumerate(AUX_OFFSET_GROUPS):
@@ -280,7 +299,9 @@ class GuiApp:
                 self.aux_slider_vars[(aux_group, axis_idx)] = var
 
                 label = ttk.Label(aux_frame, text=f"├─ {axis_name.upper()}", width=20)
-                label.grid(row=row_idx * 4 + axis_idx + 1, column=0, sticky="w", padx=(14, 8))
+                label.grid(
+                    row=row_idx * 4 + axis_idx + 1, column=0, sticky="w", padx=(14, 8)
+                )
 
                 scale = ttk.Scale(
                     aux_frame,
@@ -293,7 +314,9 @@ class GuiApp:
                         self._update_aux_label(ag),
                     ),
                 )
-                scale.grid(row=row_idx * 4 + axis_idx + 1, column=1, sticky="ew", padx=(0, 8))
+                scale.grid(
+                    row=row_idx * 4 + axis_idx + 1, column=1, sticky="ew", padx=(0, 8)
+                )
 
                 value_label = ttk.Label(aux_frame, text="0.00", width=6)
                 value_label.grid(row=row_idx * 4 + axis_idx + 1, column=2)
@@ -379,7 +402,9 @@ class GuiApp:
         requested = self.source_var.get()
         if requested.startswith("g1"):
             self.source_var.set(self.previous_source_type)
-            self._set_status("Source type 'g1' is not available yet. Using previous selection.")
+            self._set_status(
+                "Source type 'g1' is not available yet. Using previous selection."
+            )
             return
 
         self.selected_source_type = requested
@@ -459,17 +484,21 @@ class GuiApp:
             with open(self.robot_config_path, "r") as f:
                 config = yaml.safe_load(f)
 
-            # Update scale factors with current slider values (round to 2 decimals)
-            for source_type in config["scale_factors"]:
-                config["scale_factors"][source_type] = {
-                    "root": [round(v, 2) for v in self.scale_overrides["root"]],
-                    "lower_body": [round(v, 2) for v in self.scale_overrides["lower_body"]],
-                    "upper_body": [round(v, 2) for v in self.scale_overrides["upper_body"]],
-                }
+            # Update scale factors for the active source type only.
+            active_source_type = self._resolve_active_source()
+            config["scale_factors"][active_source_type] = {
+                "root": [round(v, 2) for v in self.scale_overrides["root"]],
+                "lower_body": [round(v, 2) for v in self.scale_overrides["lower_body"]],
+                "upper_body": [round(v, 2) for v in self.scale_overrides["upper_body"]],
+            }
 
             # Update aux offsets (round to 3 decimals)
-            config["hand_aux_offset"] = [round(v, 3) for v in self.aux_offset_overrides["hand_aux_offset"]]
-            config["torso_aux_offset"] = [round(v, 3) for v in self.aux_offset_overrides["torso_aux_offset"]]
+            config["hand_aux_offset"] = [
+                round(v, 3) for v in self.aux_offset_overrides["hand_aux_offset"]
+            ]
+            config["torso_aux_offset"] = [
+                round(v, 3) for v in self.aux_offset_overrides["torso_aux_offset"]
+            ]
 
             # Custom YAML dump that avoids anchors/aliases and preserves simple format
             class NoAliasDumper(yaml.SafeDumper):
@@ -487,7 +516,9 @@ class GuiApp:
                 )
 
             self._set_status(f"Config saved: {self.robot_config_path.name}")
-            messagebox.showinfo("Success", f"Config saved to {self.robot_config_path.name}")
+            messagebox.showinfo(
+                "Success", f"Config saved to {self.robot_config_path.name}"
+            )
         except Exception as exc:
             error_msg = f"Failed to save config: {exc}"
             self._set_status(error_msg)
@@ -547,9 +578,11 @@ class GuiApp:
             robot_urdf_path,
             display_pose_preset=robot_config.get("display_pose_preset"),
         )
-        robot_positions_raw, robot_rotations_raw, robot_edges = _load_urdf_link_kinematics(
-            robot_urdf_path,
-            joint_angles=tpose_angles,
+        robot_positions_raw, robot_rotations_raw, robot_edges = (
+            _load_urdf_link_kinematics(
+                robot_urdf_path,
+                joint_angles=tpose_angles,
+            )
         )
 
         missing_smpl = [
@@ -658,8 +691,7 @@ class GuiApp:
         assert self.scene is not None
 
         source_scale = {
-            group_name: self.scale_overrides[group_name]
-            for group_name in SCALE_GROUPS
+            group_name: self.scale_overrides[group_name] for group_name in SCALE_GROUPS
         }
         scaled_positions = _scaled_source_positions(
             self.scene.smpl_positions_raw,
@@ -678,7 +710,7 @@ class GuiApp:
     def _apply_aux_offset_update(self) -> None:
         """Update aux marker positions based on current offset sliders."""
         assert self.scene is not None
-        
+
         # Recompute aux positions with current offset overrides
         robot_positions_raw, robot_rotations_raw, _ = _load_urdf_link_kinematics(
             _resolve_existing_robot_urdf(self.scene.robot_config),
@@ -687,7 +719,7 @@ class GuiApp:
                 display_pose_preset=self.scene.robot_config.get("display_pose_preset"),
             ),
         )
-        
+
         # Build robot_translation
         smpl_root_body = SMPL_KEYPOINT_TO_BODY["pelvis"]
         robot_root_body = self.scene.robot_root_body
@@ -696,12 +728,16 @@ class GuiApp:
             robot_root_body,
             self.viewer_spacing,
         )
-        
+
         # Create modified robot config with current aux offsets
         modified_config = self.scene.robot_config.copy()
-        modified_config["hand_aux_offset"] = self.aux_offset_overrides["hand_aux_offset"]
-        modified_config["torso_aux_offset"] = self.aux_offset_overrides["torso_aux_offset"]
-        
+        modified_config["hand_aux_offset"] = self.aux_offset_overrides[
+            "hand_aux_offset"
+        ]
+        modified_config["torso_aux_offset"] = self.aux_offset_overrides[
+            "torso_aux_offset"
+        ]
+
         # Recompute aux positions
         robot_aux_positions = _robot_aux_positions(
             robot_positions_raw,
@@ -709,13 +745,13 @@ class GuiApp:
             modified_config,
             robot_translation,
         )
-        
+
         # Update geom positions
         for marker_name, new_pos in robot_aux_positions.items():
             if marker_name in self.aux_geom_ids:
                 geom_id = self.aux_geom_ids[marker_name]
                 self.scene.scene_model.geom_pos[geom_id] = new_pos
-        
+
         mujoco.mj_forward(self.scene.scene_model, self.scene.scene_data)
 
     def _reload_if_requested(self) -> bool:
@@ -845,4 +881,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

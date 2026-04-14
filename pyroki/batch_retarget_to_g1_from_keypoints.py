@@ -13,13 +13,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import runpy
+import sys
 from pathlib import Path
 
-from retarget_from_keypoints import main
+
+_ROBOT_CONFIG = Path(__file__).resolve().parent / "robot_configs" / "g1.yaml"
+
+
+def _warn_and_delegate() -> None:
+    sys.stderr.write(
+        "WARNING: This script is deprecated. Use 'python pyroki/batch_retarget.py --robot-config pyroki/robot_configs/g1.yaml' instead.\n"
+    )
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sys.argv = [sys.argv[0], "--robot-config", str(_ROBOT_CONFIG), *sys.argv[1:]]
+    runpy.run_path(
+        str(Path(__file__).resolve().parent / "batch_retarget.py"), run_name="__main__"
+    )
+
 
 if __name__ == "__main__":
-    main(
-        default_robot_config=str(
-            (Path(__file__).resolve().parent / "robot_configs" / "g1.yaml").resolve()
-        )
-    )
+    _warn_and_delegate()

@@ -1,5 +1,6 @@
 name: astro
-urdf_path: ../../protomotions/data/assets/urdf/for_retargeting/astro_v1.urdf
+# 29 DOF version (head_yaw_joint removed for retargeting stability)
+urdf_path: ../../protomotions/data/assets/urdf/for_retargeting/astro_v1_29dof.urdf
 mesh_dir: ../../protomotions/data/assets/mesh/astro
 keypoint_mapping:
 - - pelvis

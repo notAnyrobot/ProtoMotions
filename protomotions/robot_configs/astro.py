@@ -102,8 +102,8 @@ class AstroRobotConfig(RobotConfig):
 
     asset: RobotAssetConfig = field(
         default_factory=lambda: RobotAssetConfig(
-            asset_file_name="mjcf/astro_v1.xml",
-            usd_asset_file_name="usd/astro_v1/astro_v1_flat.usda",
+            asset_file_name="mjcf/astro_v1_29dof.xml",
+            usd_asset_file_name="usd/astro_v1_29dof_flat/astro_v1_29dof_flat.usda",
             usd_bodies_root_prim_path="/World/envs/env_.*/Robot/pelvis/",
             replace_cylinder_with_capsule=True,
             thickness=0.01,
