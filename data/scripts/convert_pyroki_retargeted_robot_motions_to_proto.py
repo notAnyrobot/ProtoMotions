@@ -246,7 +246,7 @@ def main(
             "right_foot": "right_ankle_roll_link",
         },
         "astro": {
-            "mjcf": "astro_v1.xml",
+            "mjcf": "astro_v1_29dof.xml",
             "left_foot": "left_ankle_roll_link",
             "right_foot": "right_ankle_roll_link",
         },
