@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 import sys
 
@@ -7,9 +8,12 @@ PYROKI_SCRIPT_DIR = Path(__file__).resolve().parents[1]
 if str(PYROKI_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(PYROKI_SCRIPT_DIR))
 
+from retargeting.config import AlignmentPair
 from retargeting.factory import get_retarget_config
 from retargeting.solver import (
+    build_retarget_mask,
     discover_keypoint_paths,
+    get_robot_retarget_indices,
     load_motion_data,
     retargeted_output_path,
     save_contact_labels,
@@ -115,38 +119,45 @@ def test_save_contact_labels_trims_padding(tmp_path):
         np.array([[0.25, 1.0], [0.5, 0.5]], dtype=np.float32),
     )
 
-
-from retargeting.solver import build_retarget_mask, get_robot_retarget_indices
-
-
 def test_get_robot_retarget_indices_uses_config_mapping():
     config = get_retarget_config("g1")
     link_names = [
-        "pelvis_contour_link",
-        "left_hip_pitch_link",
-        "right_hip_pitch_link",
-        "left_knee_link",
-        "right_knee_link",
+        "right_wrist_yaw_link",
+        "left_elbow_link",
         "left_ankle_roll_link",
-        "right_ankle_roll_link",
-        "left_foot_link",
+        "pelvis_contour_link",
         "right_foot_link",
         "left_shoulder_pitch_link",
-        "right_shoulder_pitch_link",
-        "left_elbow_link",
-        "right_elbow_link",
+        "right_knee_link",
         "left_wrist_yaw_link",
-        "right_wrist_yaw_link",
+        "right_shoulder_pitch_link",
+        "left_hip_pitch_link",
+        "left_foot_link",
+        "right_ankle_roll_link",
+        "right_elbow_link",
+        "left_knee_link",
+        "right_hip_pitch_link",
     ]
 
     source_names, retarget_indices = get_robot_retarget_indices(config, link_names)
 
-    assert source_names == tuple(mapping.source_keypoint for mapping in config.link_mapping)
-    assert retarget_indices.tolist() == list(range(15))
+    expected_indices = [
+        link_names.index(mapping.robot_link) for mapping in config.link_mapping
+    ]
+    assert source_names == tuple(
+        mapping.source_keypoint for mapping in config.link_mapping
+    )
+    assert retarget_indices.tolist() == expected_indices
 
 
 def test_build_retarget_mask_is_symmetric_and_uses_pair_weights():
-    config = get_retarget_config("g1")
+    non_unit_weight = 0.375
+    config = replace(
+        get_retarget_config("g1"),
+        local_alignment_pairs=(
+            AlignmentPair("left_shoulder", "left_elbow", non_unit_weight),
+        ),
+    )
     source_names = tuple(mapping.source_keypoint for mapping in config.link_mapping)
 
     mask = build_retarget_mask(config, source_names)
@@ -154,6 +165,6 @@ def test_build_retarget_mask_is_symmetric_and_uses_pair_weights():
     left_shoulder = source_names.index("left_shoulder")
     left_elbow = source_names.index("left_elbow")
     pelvis = source_names.index("pelvis")
-    assert float(mask[left_shoulder, left_elbow]) == 1.0
-    assert float(mask[left_elbow, left_shoulder]) == 1.0
+    assert float(mask[left_shoulder, left_elbow]) == non_unit_weight
+    assert float(mask[left_elbow, left_shoulder]) == non_unit_weight
     assert float(mask[pelvis, left_shoulder]) == 0.0
