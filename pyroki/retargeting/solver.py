@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from functools import partial
+from functools import lru_cache, partial
 from pathlib import Path
 import time
 from typing import Tuple, TypedDict
@@ -309,8 +309,10 @@ def run_contacts_only(
 
 def _require_solver_dependencies() -> None:
     if _SOLVER_IMPORT_ERROR is not None:
+        missing_dependency = _SOLVER_IMPORT_ERROR.name or str(_SOLVER_IMPORT_ERROR)
         raise ImportError(
-            "PyRoki solver execution requires JAX/PyRoki runtime dependencies"
+            "PyRoki solver execution requires JAX/PyRoki runtime dependencies; "
+            f"missing {missing_dependency}"
         ) from _SOLVER_IMPORT_ERROR
 
 
@@ -961,6 +963,7 @@ if _SOLVER_IMPORT_ERROR is None:
 
         return solution[var_Ts_world_root], solution[var_joints]
 
+    @lru_cache(maxsize=None)
     def _solve_retargeting_jit(max_iterations: int):
         return jdc.jit(
             partial(_solve_retargeting_impl, max_iterations=max_iterations)
@@ -1057,6 +1060,7 @@ else:
     def foot_tilt_cost(*args, **kwargs):
         _require_solver_dependencies()
 
+    @lru_cache(maxsize=None)
     def _solve_retargeting_jit(max_iterations: int):
         _require_solver_dependencies()
 

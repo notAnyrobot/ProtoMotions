@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import numpy as np
+import pytest
 
 PYROKI_SCRIPT_DIR = Path(__file__).resolve().parents[1]
 if str(PYROKI_SCRIPT_DIR) not in sys.path:
@@ -118,6 +119,22 @@ def test_solve_retargeting_keeps_static_values_out_of_jit_signature():
 
     helper_params = signature(solver._solve_retargeting_jit).parameters
     assert not {"config", "source_names", "link_names"} & set(helper_params)
+
+
+def test_solve_retargeting_jit_factory_is_cached():
+    assert hasattr(solver._solve_retargeting_jit, "cache_info")
+
+    if solver._SOLVER_IMPORT_ERROR is None:
+        assert solver._solve_retargeting_jit(800) is solver._solve_retargeting_jit(800)
+
+
+def test_missing_solver_dependency_message_names_module():
+    if solver._SOLVER_IMPORT_ERROR is None:
+        pytest.skip("solver dependencies are installed")
+
+    missing_name = solver._SOLVER_IMPORT_ERROR.name
+    with pytest.raises(ImportError, match=missing_name):
+        solver._solve_retargeting_jit(800)
 
 
 def test_canonical_cli_contacts_only_writes_current_schema(tmp_path):
