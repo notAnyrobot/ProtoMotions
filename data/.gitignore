@@ -1,0 +1,3 @@
+amass/*.pkl
+smpl/SMPL*.pkl
+smpl/SMPLX*.pkl

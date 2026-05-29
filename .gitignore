@@ -13,8 +13,8 @@ exps/*
 **/.DS_Store
 wandb/*
 newton_source/*
-data/amass/*.pkl
 .claude/*
 !.claude/commands/
 .cursor/
 renders/
+datasets/
