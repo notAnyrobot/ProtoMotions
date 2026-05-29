@@ -50,7 +50,7 @@ The full retargeting pipeline from AMASS to robot:
            ├──────────────────────────────────────┐
            ▼                                      ▼
    Retargeted robot motion               Contact labels from source
-   (batch_retarget_from_keypoints.py --robot-type g1 or --robot-type h1_2)
+   (batch_retarget_from_keypoints.py --robot-type {g1,h1_2})
    (--save-contacts-only)
            │                                      │
            └──────────────────────────────────────┘
@@ -195,7 +195,7 @@ ankles, feet, plus auxiliary points) from the packaged SMPL motions:
 
    python data/scripts/extract_retargeting_input_keypoints_from_packaged_motionlib.py \
        /path/to/amass_train.pt \
-       --output-path /path/to/output/keypoints-for-retarget/ \
+       --output-path /tmp/protomotions-retarget/keypoints-for-retarget/ \
        --skeleton-format smpl \
        --start-idx 0 \
        --skip-freq 15
@@ -273,10 +273,10 @@ Convert retargeted motions to ProtoMotions format, incorporating the source cont
 .. code-block:: bash
 
    python data/scripts/convert_pyroki_retargeted_robot_motions_to_proto.py \
-       --retargeted-motion-dir /path/to/output/pyroki-retargeted-g1/ \
-       --output-dir /path/to/output/proto-g1/ \
+       --retargeted-motion-dir /tmp/protomotions-retarget/pyroki-retargeted-g1/ \
+       --output-dir /tmp/protomotions-retarget/proto-g1/ \
        --robot-type g1 \
-       --contact-labels-dir /path/to/output/contacts/ \
+       --contact-labels-dir /tmp/protomotions-retarget/contacts/ \
        --apply-motion-filter \
        --force-remake
 
@@ -302,8 +302,8 @@ Package the converted motions into a single ``.pt`` file:
 .. code-block:: bash
 
    python protomotions/components/motion_lib.py \
-       --motion-path /path/to/output/proto-g1/ \
-       --output-file /path/to/output/proto-g1.pt
+       --motion-path /tmp/protomotions-retarget/proto-g1/ \
+       --output-file /tmp/protomotions-retarget/proto-g1.pt
 
 Step 6: Verify with Motion Visualizer
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -314,7 +314,7 @@ visualizer:
 .. code-block:: bash
 
    python examples/motion_libs_visualizer.py \
-       --motion_files /path/to/output/proto-g1.pt \
+       --motion_files /tmp/protomotions-retarget/proto-g1.pt \
        --robot g1 \
        --simulator isaacgym
 
@@ -323,7 +323,7 @@ The visualizer supports comparing multiple MotionLibs side-by-side:
 .. code-block:: bash
 
    python examples/motion_libs_visualizer.py \
-       --motion_files /path/to/output/proto-g1.pt /path/to/reference.pt \
+       --motion_files /tmp/protomotions-retarget/proto-g1.pt /path/to/reference.pt \
        --robot g1 \
        --simulator isaacgym
 
@@ -340,9 +340,14 @@ The visualizer supports comparing multiple MotionLibs side-by-side:
 Adding a New Robot for Retargeting
 ----------------------------------
 
-To retarget to a new robot, add a config under ``pyroki/retargeting/configs/`` and
-register it in ``pyroki/retargeting/factory.py``. New robot support should not copy
-the solver script.
+To add PyRoki retargeting support for a new robot, add a config under
+``pyroki/retargeting/configs/`` and register it in
+``pyroki/retargeting/factory.py``. This is enough for the PyRoki retargeting
+stage only. Full ProtoMotions pipeline support also needs ProtoMotions robot
+config and asset support, conversion support in
+``convert_pyroki_retargeted_robot_motions_to_proto.py``, and updates to the
+convenience-script robot allowlists. New robot support should not copy the
+solver script.
 
 The config owns:
 
