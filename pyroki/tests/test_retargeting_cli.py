@@ -1,4 +1,5 @@
 from dataclasses import replace
+import importlib
 from inspect import signature
 from pathlib import Path
 import subprocess
@@ -208,3 +209,57 @@ def test_h1_2_wrapper_help_warns_and_delegates_to_canonical_cli():
 
     assert "deprecated" in result.stderr.lower()
     assert "--robot-type {g1,h1_2}" in result.stdout
+
+
+def test_g1_wrapper_robot_type_wins_over_conflicting_user_arg(monkeypatch):
+    wrapper = importlib.import_module("batch_retarget_to_g1_from_keypoints")
+    captured = {}
+
+    def fake_canonical_main(argv):
+        captured["argv"] = argv
+        return 11
+
+    monkeypatch.setattr(wrapper, "canonical_main", fake_canonical_main)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pyroki/batch_retarget_to_g1_from_keypoints.py",
+            "--robot-type",
+            "h1_2",
+            "--keypoints-folder-path",
+            "keypoints",
+        ],
+    )
+
+    with pytest.warns(FutureWarning, match="deprecated"):
+        assert wrapper.main() == 11
+
+    assert captured["argv"][-2:] == ["--robot-type", "g1"]
+
+
+def test_h1_2_wrapper_robot_type_wins_over_conflicting_user_arg(monkeypatch):
+    wrapper = importlib.import_module("batch_retarget_to_h1_2_from_keypoints")
+    captured = {}
+
+    def fake_canonical_main(argv):
+        captured["argv"] = argv
+        return 12
+
+    monkeypatch.setattr(wrapper, "canonical_main", fake_canonical_main)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pyroki/batch_retarget_to_h1_2_from_keypoints.py",
+            "--robot-type",
+            "g1",
+            "--keypoints-folder-path",
+            "keypoints",
+        ],
+    )
+
+    with pytest.warns(FutureWarning, match="deprecated"):
+        assert wrapper.main() == 12
+
+    assert captured["argv"][-2:] == ["--robot-type", "h1_2"]

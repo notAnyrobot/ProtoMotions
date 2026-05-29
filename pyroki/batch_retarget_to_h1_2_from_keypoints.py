@@ -24,7 +24,7 @@ def main() -> int:
         FutureWarning,
         stacklevel=2,
     )
-    return canonical_main(["--robot-type", "h1_2", *sys.argv[1:]])
+    return canonical_main([*sys.argv[1:], "--robot-type", "h1_2"])
 
 
 if __name__ == "__main__":
