@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 from pathlib import Path
 import time
 from typing import Tuple, TypedDict
@@ -667,8 +668,7 @@ if _SOLVER_IMPORT_ERROR is None:
             * weight
         )
 
-    @jdc.jit
-    def solve_retargeting(
+    def _solve_retargeting_impl(
         robot: pk.Robot,
         robot_coll: pk.collision.RobotCollision | None,
         target_keypoints: jnp.ndarray,
@@ -677,26 +677,25 @@ if _SOLVER_IMPORT_ERROR is None:
         right_foot_contact: jnp.ndarray,
         joint_retarget_indices: jnp.ndarray,
         retarget_mask: jnp.ndarray,
-        source_names: tuple[str, ...],
-        link_names: tuple[str, ...],
-        config: PyrokiRetargetConfig,
+        weights: SolverWeights,
+        foot_indices: jnp.ndarray,
+        left_wrist_robot_idx: jnp.ndarray,
+        right_wrist_robot_idx: jnp.ndarray,
+        torso_link_idx: int,
+        hand_aux_offset: jnp.ndarray,
+        torso_aux_offset: jnp.ndarray,
+        keypoint_weight_indices: jnp.ndarray,
+        keypoint_weight_multipliers: jnp.ndarray,
+        rest_penalty_joint_indices: jnp.ndarray,
+        max_joint_velocity: float,
         subsample_factor: int = 1,
         input_fps: float = 30.0,
+        *,
+        max_iterations: int,
     ) -> Tuple[jaxlie.SE3, jnp.ndarray]:
         """Solve the simplified retargeting problem."""
-        weights: SolverWeights = config.weights.as_dict()  # type: ignore[assignment]
-
         n_retarget = len(joint_retarget_indices)
         timesteps = target_keypoints.shape[0]
-
-        foot_indices = jnp.array(
-            [
-                source_names.index("left_ankle"),
-                source_names.index("right_ankle"),
-                source_names.index("left_foot"),
-                source_names.index("right_foot"),
-            ]
-        )
 
         class SimplifiedJointsScaleVar(
             jaxls.Var[jax.Array],
@@ -804,33 +803,25 @@ if _SOLVER_IMPORT_ERROR is None:
             T_world_link = T_world_root @ T_root_link
             link_pos = T_world_link.translation()[joint_retarget_indices]
 
-            left_wrist = source_names.index("left_wrist")
-            left_wrist_idx = joint_retarget_indices[left_wrist]
-            link_pos_left_wrist = T_world_link.translation()[left_wrist_idx]
+            link_pos_left_wrist = T_world_link.translation()[left_wrist_robot_idx]
             link_rot_mat_left_wrist = T_world_link.rotation().as_matrix()[
-                left_wrist_idx
+                left_wrist_robot_idx
             ]
-            hand_aux_offset = jnp.array(config.hand_aux_offset)
             left_hand_aux_pos = (
                 link_pos_left_wrist + link_rot_mat_left_wrist @ hand_aux_offset
             )
 
-            right_wrist = source_names.index("right_wrist")
-            right_wrist_idx = joint_retarget_indices[right_wrist]
-            link_pos_right_wrist = T_world_link.translation()[right_wrist_idx]
+            link_pos_right_wrist = T_world_link.translation()[right_wrist_robot_idx]
             link_rot_mat_right_wrist = T_world_link.rotation().as_matrix()[
-                right_wrist_idx
+                right_wrist_robot_idx
             ]
             right_hand_aux_pos = (
                 link_pos_right_wrist + link_rot_mat_right_wrist @ hand_aux_offset
             )
 
-            torso_idx = link_names.index(config.torso_link_name)
-            link_pos_torso = T_world_link.translation()[torso_idx]
-            link_rot_mat_torso = T_world_link.rotation().as_matrix()[torso_idx]
-            torso_aux_pos = link_pos_torso + link_rot_mat_torso @ jnp.array(
-                config.torso_aux_offset
-            )
+            link_pos_torso = T_world_link.translation()[torso_link_idx]
+            link_rot_mat_torso = T_world_link.rotation().as_matrix()[torso_link_idx]
+            torso_aux_pos = link_pos_torso + link_rot_mat_torso @ torso_aux_offset
 
             link_pos_with_aux = jnp.concatenate(
                 [
@@ -843,18 +834,16 @@ if _SOLVER_IMPORT_ERROR is None:
             )
 
             keypoint_pos = keypoints
-            keypoint_labels = source_names + (
-                "left_hand_aux",
-                "right_hand_aux",
-                "torso_aux",
-            )
-            for label, multiplier in config.global_alignment_keypoint_weights.items():
-                keypoint_idx = keypoint_labels.index(label)
-                keypoint_pos = keypoint_pos.at[keypoint_idx, :].set(
-                    keypoint_pos[keypoint_idx, :] * multiplier
+            if keypoint_weight_indices.size:
+                keypoint_pos = keypoint_pos.at[keypoint_weight_indices, :].set(
+                    keypoint_pos[keypoint_weight_indices, :]
+                    * keypoint_weight_multipliers[:, None]
                 )
-                link_pos_with_aux = link_pos_with_aux.at[keypoint_idx, :].set(
-                    link_pos_with_aux[keypoint_idx, :] * multiplier
+                link_pos_with_aux = link_pos_with_aux.at[
+                    keypoint_weight_indices, :
+                ].set(
+                    link_pos_with_aux[keypoint_weight_indices, :]
+                    * keypoint_weight_multipliers[:, None]
                 )
 
             return (link_pos_with_aux - keypoint_pos).flatten() * weights[
@@ -904,25 +893,19 @@ if _SOLVER_IMPORT_ERROR is None:
             joint_vel_limit_cost(
                 robot.joint_var_cls(jnp.arange(1, timesteps)),
                 robot.joint_var_cls(jnp.arange(0, timesteps - 1)),
-                config.max_joint_velocity,
+                max_joint_velocity,
                 subsample_factor / input_fps,
                 weights["joint_vel_limit"],
             ),
         ]
 
-        if config.rest_penalty_joint_names:
-            joints_to_move_less = jnp.array(
-                [
-                    robot.joints.actuated_names.index(name)
-                    for name in config.rest_penalty_joint_names
-                ]
-            )
+        if rest_penalty_joint_indices.size:
             costs.append(
                 pk.costs.rest_cost(
                     var_joints,
                     var_joints.default_factory()[None],
                     jnp.full(var_joints.default_factory().shape, 0.02)
-                    .at[joints_to_move_less]
+                    .at[rest_penalty_joint_indices]
                     .set(weights["joint_rest_penalty"])[None],
                 )
             )
@@ -971,12 +954,97 @@ if _SOLVER_IMPORT_ERROR is None:
                     ]
                 ),
                 termination=jaxls.TerminationConfig(
-                    max_iterations=config.max_iterations
+                    max_iterations=max_iterations
                 ),
             )
         )
 
         return solution[var_Ts_world_root], solution[var_joints]
+
+    def _solve_retargeting_jit(max_iterations: int):
+        return jdc.jit(
+            partial(_solve_retargeting_impl, max_iterations=max_iterations)
+        )
+
+    def solve_retargeting(
+        robot: pk.Robot,
+        robot_coll: pk.collision.RobotCollision | None,
+        target_keypoints: jnp.ndarray,
+        target_orientations: jnp.ndarray,
+        left_foot_contact: jnp.ndarray,
+        right_foot_contact: jnp.ndarray,
+        joint_retarget_indices: jnp.ndarray,
+        retarget_mask: jnp.ndarray,
+        source_names: tuple[str, ...],
+        link_names: tuple[str, ...],
+        config: PyrokiRetargetConfig,
+        subsample_factor: int = 1,
+        input_fps: float = 30.0,
+    ) -> Tuple[jaxlie.SE3, jnp.ndarray]:
+        weights: SolverWeights = config.weights.as_dict()  # type: ignore[assignment]
+        foot_indices = jnp.array(
+            [
+                source_names.index("left_ankle"),
+                source_names.index("right_ankle"),
+                source_names.index("left_foot"),
+                source_names.index("right_foot"),
+            ],
+            dtype=jnp.int32,
+        )
+        left_wrist_robot_idx = joint_retarget_indices[source_names.index("left_wrist")]
+        right_wrist_robot_idx = joint_retarget_indices[
+            source_names.index("right_wrist")
+        ]
+        torso_link_idx = link_names.index(config.torso_link_name)
+        hand_aux_offset = jnp.array(config.hand_aux_offset)
+        torso_aux_offset = jnp.array(config.torso_aux_offset)
+
+        keypoint_labels = source_names + (
+            "left_hand_aux",
+            "right_hand_aux",
+            "torso_aux",
+        )
+        keypoint_weight_indices = jnp.array(
+            [
+                keypoint_labels.index(label)
+                for label in config.global_alignment_keypoint_weights
+            ],
+            dtype=jnp.int32,
+        )
+        keypoint_weight_multipliers = jnp.array(
+            list(config.global_alignment_keypoint_weights.values())
+        )
+        rest_penalty_joint_indices = jnp.array(
+            [
+                robot.joints.actuated_names.index(name)
+                for name in config.rest_penalty_joint_names
+            ],
+            dtype=jnp.int32,
+        )
+
+        return _solve_retargeting_jit(config.max_iterations)(
+            robot=robot,
+            robot_coll=robot_coll,
+            target_keypoints=target_keypoints,
+            target_orientations=target_orientations,
+            left_foot_contact=left_foot_contact,
+            right_foot_contact=right_foot_contact,
+            joint_retarget_indices=joint_retarget_indices,
+            retarget_mask=retarget_mask,
+            weights=weights,
+            foot_indices=foot_indices,
+            left_wrist_robot_idx=left_wrist_robot_idx,
+            right_wrist_robot_idx=right_wrist_robot_idx,
+            torso_link_idx=torso_link_idx,
+            hand_aux_offset=hand_aux_offset,
+            torso_aux_offset=torso_aux_offset,
+            keypoint_weight_indices=keypoint_weight_indices,
+            keypoint_weight_multipliers=keypoint_weight_multipliers,
+            rest_penalty_joint_indices=rest_penalty_joint_indices,
+            max_joint_velocity=config.max_joint_velocity,
+            subsample_factor=subsample_factor,
+            input_fps=input_fps,
+        )
 
 else:
 
@@ -989,5 +1057,22 @@ else:
     def foot_tilt_cost(*args, **kwargs):
         _require_solver_dependencies()
 
-    def solve_retargeting(*args, **kwargs):
+    def _solve_retargeting_jit(max_iterations: int):
+        _require_solver_dependencies()
+
+    def solve_retargeting(
+        robot,
+        robot_coll,
+        target_keypoints,
+        target_orientations,
+        left_foot_contact,
+        right_foot_contact,
+        joint_retarget_indices,
+        retarget_mask,
+        source_names,
+        link_names,
+        config,
+        subsample_factor: int = 1,
+        input_fps: float = 30.0,
+    ):
         _require_solver_dependencies()

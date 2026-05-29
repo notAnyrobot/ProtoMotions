@@ -1,4 +1,5 @@
 from dataclasses import replace
+from inspect import signature
 from pathlib import Path
 import subprocess
 import sys
@@ -11,6 +12,7 @@ if str(PYROKI_SCRIPT_DIR) not in sys.path:
 
 from retargeting.cli import BatchRetargetingOptions, build_parser, main
 from retargeting.factory import get_retarget_config
+import retargeting.solver as solver
 
 
 def test_parser_accepts_existing_args_plus_robot_type(tmp_path):
@@ -110,6 +112,14 @@ def test_canonical_script_help_works_without_pyroki_runtime_import():
     assert "--keypoints-folder-path" in result.stdout
 
 
+def test_solve_retargeting_keeps_static_values_out_of_jit_signature():
+    public_params = signature(solver.solve_retargeting).parameters
+    assert {"config", "source_names", "link_names"}.issubset(public_params)
+
+    helper_params = signature(solver._solve_retargeting_jit).parameters
+    assert not {"config", "source_names", "link_names"} & set(helper_params)
+
+
 def test_canonical_cli_contacts_only_writes_current_schema(tmp_path):
     keypoints_dir = tmp_path / "keypoints"
     contacts_dir = tmp_path / "contacts"
@@ -148,4 +158,12 @@ def test_canonical_cli_contacts_only_writes_current_schema(tmp_path):
 
     assert "Running in save-contacts-only mode" in result.stdout
     saved = np.load(contacts_dir / "walk_contacts.npz")
-    assert saved["foot_contacts"].shape == (3, 2)
+    assert set(saved.files) == {"foot_contacts"}
+    expected = np.array(
+        [
+            [1.0 / 3.0, 2.0 / 3.0],
+            [1.0 / 3.0, 2.0 / 3.0],
+            [1.0 / 3.0, 2.0 / 3.0],
+        ]
+    )
+    np.testing.assert_allclose(saved["foot_contacts"], expected)
