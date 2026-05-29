@@ -168,7 +168,8 @@ To transfer the vaulting skill to a robot like G1:
 
    conda activate pyroki
    
-   python pyroki/batch_retarget_to_g1_from_keypoints.py \
+   python pyroki/batch_retarget_from_keypoints.py \
+       --robot-type g1 \
        --keypoints-folder-path examples/data/rigv1-vaulting/keypoints-for-retarget \
        --output-dir examples/data/rigv1-vaulting/pyroki-retargeted-g1 \
        --no-visualize \
@@ -274,4 +275,3 @@ Next Steps
 * :doc:`domain_randomization` - Prepare for sim2sim transfer
 * :doc:`custom_robot` - Add your own robot for vaulting
 * :doc:`../../concepts/abstractions` - Understand SceneLib in depth
-
