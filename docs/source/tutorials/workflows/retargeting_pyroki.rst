@@ -50,7 +50,8 @@ The full retargeting pipeline from AMASS to robot:
            ├──────────────────────────────────────┐
            ▼                                      ▼
    Retargeted robot motion               Contact labels from source
-   (batch_retarget_to_<robot>_from_keypoints.py)  (--save-contacts-only)
+   (batch_retarget_from_keypoints.py --robot-type g1 or --robot-type h1_2)
+   (--save-contacts-only)
            │                                      │
            └──────────────────────────────────────┘
                            │
@@ -215,36 +216,27 @@ ankles, feet, plus auxiliary points) from the packaged SMPL motions:
 Step 2: Run PyRoki Retargeting
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Activate the PyRoki environment (separate from ProtoMotions) and run batch retargeting:
-
-**For G1:**
+Activate the PyRoki environment (separate from ProtoMotions) and run the canonical
+batch retargeting CLI:
 
 .. code-block:: bash
 
    conda activate pyroki  # Switch to PyRoki environment
-   
-   python pyroki/batch_retarget_to_g1_from_keypoints.py \
-       --keypoints-folder-path /path/to/output/keypoints-for-retarget/ \
-       --output-dir /path/to/output/pyroki-retargeted-g1/ \
+
+   python pyroki/batch_retarget_from_keypoints.py \
+       --robot-type g1 \
+       --keypoints-folder-path /tmp/protomotions-retarget/keypoints-for-retarget/ \
+       --output-dir /tmp/protomotions-retarget/pyroki-retargeted-g1/ \
        --source-type smpl \
        --subsample-factor 1 \
        --no-visualize \
        --skip-existing
 
-**For H1_2:**
-
-.. code-block:: bash
-
-   python pyroki/batch_retarget_to_h1_2_from_keypoints.py \
-       --keypoints-folder-path /path/to/output/keypoints-for-retarget/ \
-       --output-dir /path/to/output/pyroki-retargeted-g1/ \
-       --source-type smpl \
-       --subsample-factor 1 \
-       --no-visualize \
-       --skip-existing
+Use ``--robot-type h1_2`` and an H1_2 output directory for H1_2 retargeting.
 
 **Arguments:**
 
+* ``--robot-type``: Target robot (``g1`` or ``h1_2``)
 * ``--keypoints-folder-path``: Input directory with keypoint ``.npy`` files
 * ``--output-dir``: Output directory for retargeted motions (``.npz`` files)
 * ``--source-type``: Source skeleton type (``smpl`` for AMASS, ``rigv1`` for custom rigs)
@@ -261,16 +253,17 @@ imperfect, and source motion contacts are more reliable.
 
 .. code-block:: bash
 
-   python pyroki/batch_retarget_to_g1_from_keypoints.py \
-       --keypoints-folder-path /path/to/output/keypoints-for-retarget/ \
+   python pyroki/batch_retarget_from_keypoints.py \
+       --robot-type g1 \
+       --keypoints-folder-path /tmp/protomotions-retarget/keypoints-for-retarget/ \
        --source-type smpl \
        --subsample-factor 1 \
        --save-contacts-only \
-       --contacts-dir /path/to/output/contacts/ \
+       --contacts-dir /tmp/protomotions-retarget/contacts/ \
        --skip-existing
 
-The ``--save-contacts-only`` flag skips retargeting and only extracts processed 
-foot contact labels from the source keypoints.
+Use the same ``--robot-type`` value used for retargeting. Contact extraction is based
+on source keypoints and writes the same ``*_contacts.npz`` schema for each robot.
 
 Step 4: Convert to ProtoMotions Format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -347,124 +340,50 @@ The visualizer supports comparing multiple MotionLibs side-by-side:
 Adding a New Robot for Retargeting
 ----------------------------------
 
-To retarget to a new robot, create a new retargeting script based on existing ones. 
-Comparing ``batch_retarget_to_g1_from_keypoints.py`` and 
-``batch_retarget_to_h1_2_from_keypoints.py`` shows the key differences:
+To retarget to a new robot, add a config under ``pyroki/retargeting/configs/`` and
+register it in ``pyroki/retargeting/factory.py``. New robot support should not copy
+the solver script.
 
-1. **Link Name Mapping**
-   
-   Update the keypoint-to-link mapping in ``get_humanoid_retarget_indices()``:
+The config owns:
 
-   .. code-block:: python
-   
-      # G1 example
-      for human_name, g1_name in [
-          ("pelvis", "pelvis_contour_link"),
-          ("left_hip", "left_hip_pitch_link"),
-          ("left_knee", "left_knee_link"),
-          ("left_ankle", "left_ankle_roll_link"),
-          ("left_foot", "left_foot_link"),
-          ("left_shoulder", "left_shoulder_pitch_link"),
-          ("left_elbow", "left_elbow_link"),
-          ("left_wrist", "left_wrist_yaw_link"),
-          # ... right side similarly
-      ]:
-   
-      # H1_2 example  
-      for human_name, h1_2_name in [
-          ("pelvis", "pelvis"),
-          ("left_hip", "left_hip_yaw_link"),
-          ("left_knee", "left_knee_link"),
-          ("left_ankle", "left_ankle_roll_link"),
-          ("left_foot", "left_foot_link"),
-          ("left_shoulder", "left_shoulder_roll_link"),
-          ("left_elbow", "left_elbow_link"),
-          ("left_wrist", "left_wrist_yaw_link"),
-          # ... right side similarly
-      ]:
+* ``robot_type`` and ``display_name``
+* retargeting URDF path and mesh directory
+* source keypoint to robot link mapping
+* source-type scaling for ``smpl`` and ``rigv1``
+* optimization weights
+* hand and torso auxiliary offsets
+* global-alignment keypoint weights such as hip or elbow downweighting
+* short robot-specific hooks when a behavior cannot be represented as fields
 
-2. **Keypoint Scaling**
-   
-   Different robots have different proportions. Adjust the scaling factors in 
-   ``load_motion_data()`` to match your robot's size:
+The shared solver owns file discovery, keypoint loading, contact writing, PyRoki
+optimization, visualization, and ``*_retargeted.npz`` output writing.
 
-   .. code-block:: python
-   
-      # G1 (smaller robot)
-      if source_type == "smpl":
-          simplified_keypoints_lower_body_local = (
-              simplified_keypoints_lower_body_local
-              * onp.array([0.9, 0.9, 0.85])[None, None, :]
-          )
-          simplified_keypoints_upper_body_local = (
-              simplified_keypoints_upper_body_local
-              * onp.array([0.9, 0.9, 0.8])[None, None, :]
-          )
-   
-      # H1_2 (larger robot, closer to human scale)
-      if source_type == "smpl":
-          simplified_keypoints_lower_body_local = (
-              simplified_keypoints_lower_body_local
-              * onp.array([1.1, 1.1, 1.1])[None, None, :]
-          )
-          simplified_keypoints_upper_body_local = (
-              simplified_keypoints_upper_body_local
-              * onp.array([1.1, 1.1, 1.0])[None, None, :]
-          )
+Compatibility Wrappers
+----------------------
 
-3. **Auxiliary Point Offsets**
-   
-   Update hand and torso auxiliary point offsets in ``pc_alignment_cost()``:
+The old robot-specific scripts still exist for temporary compatibility:
 
-   .. code-block:: python
-   
-      # G1 hand auxiliary point
-      left_hand_aux_pos = link_pos_left_wrist + link_rot_mat_left_wrist @ jnp.array(
-          [0.0, 0.0, 0.14]  # G1 specific offset
-      )
-      
-      # H1_2 hand auxiliary point
-      left_hand_aux_pos = link_pos_left_wrist + link_rot_mat_left_wrist @ jnp.array(
-          [0.0, 0.0, 0.2]  # H1_2 specific offset
-      )
+.. code-block:: bash
 
-4. **URDF and Mesh Paths**
-   
-   Update default paths for your robot's URDF and mesh files:
+   python pyroki/batch_retarget_to_g1_from_keypoints.py \
+       --keypoints-folder-path /tmp/protomotions-retarget/keypoints-for-retarget/ \
+       --source-type smpl \
+       --no-visualize
+   python pyroki/batch_retarget_to_h1_2_from_keypoints.py \
+       --keypoints-folder-path /tmp/protomotions-retarget/keypoints-for-retarget/ \
+       --source-type smpl \
+       --no-visualize
 
-   .. code-block:: python
-   
-      parser.add_argument(
-          "--urdf-path",
-          default=str(SCRIPT_DIR / "../protomotions/data/assets/urdf/for_retargeting/your_robot.urdf"),
-      )
-      parser.add_argument(
-          "--mesh-dir",
-          default=str(SCRIPT_DIR / "../protomotions/data/assets/mesh/YourRobot"),
-      )
+They delegate to the canonical CLI and emit a deprecation warning. New automation
+should call:
 
-5. **Optimization Weights**
-   
-   Tune the optimization weights for your robot:
+.. code-block:: bash
 
-   .. code-block:: python
-   
-      weights_dict = RetargetingWeights(
-          local_alignment=1.0,
-          global_alignment=4.0,  # G1: 4.0, H1_2: 3.0
-          root_smoothness=1.0,
-          joint_smoothness=4.0,
-          self_collision=0.0,
-          joint_rest_penalty=1.0,
-          joint_vel_limit=50.0,
-          foot_contact=30.0,
-          foot_tilt=1.0,
-      )
-
-6. **Update Conversion Script**
-   
-   Add your robot type to ``convert_pyroki_retargeted_robot_motions_to_proto.py`` 
-   to handle robot-specific processing (joint ordering, height offsets, etc.).
+   python pyroki/batch_retarget_from_keypoints.py \
+       --robot-type g1 \
+       --keypoints-folder-path /tmp/protomotions-retarget/keypoints-for-retarget/ \
+       --source-type smpl \
+       --no-visualize
 
 Next Steps
 ----------
