@@ -67,7 +67,12 @@ def test_load_motion_data_applies_g1_smpl_scaling_and_padding(tmp_path):
     assert data.num_timesteps == 2
     np.testing.assert_allclose(data.keypoints[0, 0], np.array([0.9, 1.8, 2.55]))
     np.testing.assert_allclose(data.keypoints[0, 1], np.array([1.8, 1.8, 2.55]))
-    np.testing.assert_allclose(data.keypoints[0, 9], np.array([0.9, 3.4, 2.55]))
+    np.testing.assert_allclose(data.keypoints[0, 9], np.array([0.9, 3.6, 2.55]))
+    np.testing.assert_allclose(
+        data.keypoints[0, 9, 1],
+        data.keypoints[0, 0, 1]
+        + (4.0 - 2.0) * config.source_scales["smpl"].upper_body[1],
+    )
 
 
 def test_save_contact_labels_trims_padding(tmp_path):

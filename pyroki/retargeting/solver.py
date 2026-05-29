@@ -58,12 +58,9 @@ def _scale_keypoints(
     root = keypoints[:, 0, :]
     local = keypoints - root[:, None, :]
     lower_body_local = local[:, 1:9, :] * onp.array(scale.lower_body)[None, None, :]
-    upper_body_scale = onp.array(
-        (scale.upper_body[0], scale.upper_body[2], scale.upper_body[2])
-    )
-    upper_body_local = (
-        local[:, 9 : N_RETARGET + N_AUX, :] * upper_body_scale[None, None, :]
-    )
+    upper_body_local = local[:, 9 : N_RETARGET + N_AUX, :] * onp.array(
+        scale.upper_body
+    )[None, None, :]
     scaled_local = onp.concatenate([lower_body_local, upper_body_local], axis=1)
     scaled_root = root * onp.array(scale.lower_body)[None, :]
     scaled_keypoints = scaled_root[:, None, :] + scaled_local
