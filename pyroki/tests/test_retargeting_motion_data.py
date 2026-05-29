@@ -75,6 +75,33 @@ def test_load_motion_data_applies_g1_smpl_scaling_and_padding(tmp_path):
     )
 
 
+def test_load_motion_data_repeats_last_frame_when_padding(tmp_path):
+    motion_path = tmp_path / "walk.npy"
+    _write_keypoints(motion_path)
+    motion = np.load(motion_path, allow_pickle=True).item()
+    motion["positions"][2, 0, :] = np.array([2.0, 3.0, 4.0], dtype=np.float32)
+    motion["positions"][2, 1, :] = np.array([5.0, 3.0, 4.0], dtype=np.float32)
+    np.save(motion_path, motion)
+    config = get_retarget_config("g1")
+
+    data = load_motion_data(
+        motion_path=motion_path,
+        config=config,
+        source_type="smpl",
+        subsample_factor=1,
+        target_raw_frames=4,
+    )
+
+    lower_body_scale = np.array(config.source_scales["smpl"].lower_body)
+    expected_root = np.array([2.0, 3.0, 4.0]) * lower_body_scale
+    expected_lower = expected_root + np.array([3.0, 0.0, 0.0]) * lower_body_scale
+    assert data.keypoints.shape == (4, 18, 3)
+    assert data.num_timesteps == 3
+    np.testing.assert_allclose(data.keypoints[3, 0], expected_root)
+    np.testing.assert_allclose(data.keypoints[3, 1], expected_lower)
+    np.testing.assert_allclose(data.keypoints[3], data.keypoints[2])
+
+
 def test_save_contact_labels_trims_padding(tmp_path):
     output_path = tmp_path / "contacts.npz"
     left = np.array([[0.25], [0.5], [0.75]], dtype=np.float32)
