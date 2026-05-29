@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from types import MappingProxyType
+from typing import Any, Callable, Mapping, TypeVar
 
 
 N_RETARGET = 15
@@ -12,6 +13,14 @@ N_AUX = 3
 N_KEYPOINTS_WITH_AUX = N_RETARGET + N_AUX
 
 RobotCostHook = Callable[[Any], list[Any]]
+_MappingKey = TypeVar("_MappingKey")
+_MappingValue = TypeVar("_MappingValue")
+
+
+def freeze_mapping(
+    mapping: Mapping[_MappingKey, _MappingValue],
+) -> Mapping[_MappingKey, _MappingValue]:
+    return MappingProxyType(dict(mapping))
 
 
 @dataclass(frozen=True)
@@ -67,12 +76,14 @@ class PyrokiRetargetConfig:
     urdf_path: Path
     mesh_dir: Path
     link_mapping: tuple[LinkMapping, ...]
-    source_scales: dict[str, SourceScale]
+    source_scales: Mapping[str, SourceScale]
     weights: RetargetingWeights
     hand_aux_offset: tuple[float, float, float]
     torso_link_name: str
     torso_aux_offset: tuple[float, float, float]
-    global_alignment_keypoint_weights: dict[str, float] = field(default_factory=dict)
+    global_alignment_keypoint_weights: Mapping[str, float] = field(
+        default_factory=lambda: freeze_mapping({})
+    )
     rest_penalty_joint_names: tuple[str, ...] = ()
     local_alignment_pairs: tuple[AlignmentPair, ...] = ()
     max_joint_velocity: float = 20.0

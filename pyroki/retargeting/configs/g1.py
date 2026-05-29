@@ -8,6 +8,7 @@ from retargeting.config import (
     PyrokiRetargetConfig,
     RetargetingWeights,
     SourceScale,
+    freeze_mapping,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -48,10 +49,10 @@ G1_RETARGET_CONFIG = PyrokiRetargetConfig(
         LinkMapping("left_wrist", "left_wrist_yaw_link"),
         LinkMapping("right_wrist", "right_wrist_yaw_link"),
     ),
-    source_scales={
+    source_scales=freeze_mapping({
         "smpl": SourceScale(lower_body=(0.9, 0.9, 0.85), upper_body=(0.9, 0.9, 0.8)),
         "rigv1": SourceScale(lower_body=(0.8, 0.8, 0.75), upper_body=(0.8, 0.8, 0.7)),
-    },
+    }),
     weights=RetargetingWeights(
         local_alignment=1.0,
         global_alignment=4.0,
@@ -66,12 +67,12 @@ G1_RETARGET_CONFIG = PyrokiRetargetConfig(
     hand_aux_offset=(0.0, 0.0, 0.14),
     torso_link_name="torso_link",
     torso_aux_offset=(0.15, 0.0, -0.1),
-    global_alignment_keypoint_weights={
+    global_alignment_keypoint_weights=freeze_mapping({
         "left_elbow": 0.25,
         "right_elbow": 0.25,
         "left_hand_aux": 0.25,
         "right_hand_aux": 0.25,
-    },
+    }),
     rest_penalty_joint_names=(
         "waist_roll_joint",
         "right_wrist_pitch_joint",
