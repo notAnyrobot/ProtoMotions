@@ -106,40 +106,24 @@ $PROTO_PYTHON data/scripts/extract_keypoints_from_single_motion.py \
 # Step 2: Run PyRoki retargeting (uses PyRoki)
 echo ""
 echo "[Step 2/5] Running PyRoki retargeting to ${ROBOT_TYPE^^}..."
-if [ "$ROBOT_TYPE" == "g1" ]; then
-    $PYROKI_PYTHON pyroki/batch_retarget_to_g1_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --output-dir "$RETARGETED_DIR" \
-        --no-visualize
-else
-    $PYROKI_PYTHON pyroki/batch_retarget_to_h1_2_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --output-dir "$RETARGETED_DIR" \
-        --no-visualize
-fi
+$PYROKI_PYTHON pyroki/batch_retarget_from_keypoints.py \
+    --robot-type "$ROBOT_TYPE" \
+    --subsample-factor 1 \
+    --keypoints-folder-path "$KEYPOINTS_DIR" \
+    --source-type smpl \
+    --output-dir "$RETARGETED_DIR" \
+    --no-visualize
 
 # Step 3: Extract contact labels from source motion (uses PyRoki)
 echo ""
 echo "[Step 3/5] Extracting foot contact labels from source SMPL motion..."
-if [ "$ROBOT_TYPE" == "g1" ]; then
-    $PYROKI_PYTHON pyroki/batch_retarget_to_g1_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --save-contacts-only \
-        --contacts-dir "$CONTACTS_DIR"
-else
-    $PYROKI_PYTHON pyroki/batch_retarget_to_h1_2_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --save-contacts-only \
-        --contacts-dir "$CONTACTS_DIR"
-fi
+$PYROKI_PYTHON pyroki/batch_retarget_from_keypoints.py \
+    --robot-type "$ROBOT_TYPE" \
+    --subsample-factor 1 \
+    --keypoints-folder-path "$KEYPOINTS_DIR" \
+    --source-type smpl \
+    --save-contacts-only \
+    --contacts-dir "$CONTACTS_DIR"
 
 # Step 4: Convert to ProtoMotions format with contact labels (uses ProtoMotions)
 echo ""
@@ -172,4 +156,3 @@ echo ""
 echo "To visualize the result:"
 echo "  python examples/motion_libs_visualizer.py --motion_files $OUTPUT_MOTION --robot $ROBOT_TYPE --simulator isaacgym"
 echo ""
-

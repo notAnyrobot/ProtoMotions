@@ -100,44 +100,26 @@ $PROTO_PYTHON data/scripts/extract_retargeting_input_keypoints_from_packaged_mot
 # Step 2: Run PyRoki retargeting (uses PyRoki)
 echo ""
 echo "[Step 2/5] Running PyRoki retargeting to ${ROBOT_TYPE^^}..."
-if [ "$ROBOT_TYPE" == "g1" ]; then
-    $PYROKI_PYTHON pyroki/batch_retarget_to_g1_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --output-dir "$RETARGETED_DIR" \
-        --no-visualize \
-        --skip-existing
-else
-    $PYROKI_PYTHON pyroki/batch_retarget_to_h1_2_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --output-dir "$RETARGETED_DIR" \
-        --no-visualize \
-        --skip-existing
-fi
+$PYROKI_PYTHON pyroki/batch_retarget_from_keypoints.py \
+    --robot-type "$ROBOT_TYPE" \
+    --subsample-factor 1 \
+    --keypoints-folder-path "$KEYPOINTS_DIR" \
+    --source-type smpl \
+    --output-dir "$RETARGETED_DIR" \
+    --no-visualize \
+    --skip-existing
 
 # Step 3: Extract contact labels from source motions (uses PyRoki)
 echo ""
 echo "[Step 3/5] Extracting foot contact labels from source SMPL motions..."
-if [ "$ROBOT_TYPE" == "g1" ]; then
-    $PYROKI_PYTHON pyroki/batch_retarget_to_g1_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --save-contacts-only \
-        --contacts-dir "$CONTACTS_DIR" \
-        --skip-existing
-else
-    $PYROKI_PYTHON pyroki/batch_retarget_to_h1_2_from_keypoints.py \
-        --subsample-factor 1 \
-        --keypoints-folder-path "$KEYPOINTS_DIR" \
-        --source-type smpl \
-        --save-contacts-only \
-        --contacts-dir "$CONTACTS_DIR" \
-        --skip-existing
-fi
+$PYROKI_PYTHON pyroki/batch_retarget_from_keypoints.py \
+    --robot-type "$ROBOT_TYPE" \
+    --subsample-factor 1 \
+    --keypoints-folder-path "$KEYPOINTS_DIR" \
+    --source-type smpl \
+    --save-contacts-only \
+    --contacts-dir "$CONTACTS_DIR" \
+    --skip-existing
 
 # Step 4: Convert to ProtoMotions format with contact labels (uses ProtoMotions)
 echo ""
