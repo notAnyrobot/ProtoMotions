@@ -184,3 +184,27 @@ def test_canonical_cli_contacts_only_writes_current_schema(tmp_path):
         ]
     )
     np.testing.assert_allclose(saved["foot_contacts"], expected)
+
+
+def test_g1_wrapper_help_warns_and_delegates_to_canonical_cli():
+    result = subprocess.run(
+        [sys.executable, "pyroki/batch_retarget_to_g1_from_keypoints.py", "--help"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "deprecated" in result.stderr.lower()
+    assert "--robot-type {g1,h1_2}" in result.stdout
+
+
+def test_h1_2_wrapper_help_warns_and_delegates_to_canonical_cli():
+    result = subprocess.run(
+        [sys.executable, "pyroki/batch_retarget_to_h1_2_from_keypoints.py", "--help"],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "deprecated" in result.stderr.lower()
+    assert "--robot-type {g1,h1_2}" in result.stdout
