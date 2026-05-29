@@ -114,3 +114,46 @@ def test_save_contact_labels_trims_padding(tmp_path):
         saved["foot_contacts"],
         np.array([[0.25, 1.0], [0.5, 0.5]], dtype=np.float32),
     )
+
+
+from retargeting.solver import build_retarget_mask, get_robot_retarget_indices
+
+
+def test_get_robot_retarget_indices_uses_config_mapping():
+    config = get_retarget_config("g1")
+    link_names = [
+        "pelvis_contour_link",
+        "left_hip_pitch_link",
+        "right_hip_pitch_link",
+        "left_knee_link",
+        "right_knee_link",
+        "left_ankle_roll_link",
+        "right_ankle_roll_link",
+        "left_foot_link",
+        "right_foot_link",
+        "left_shoulder_pitch_link",
+        "right_shoulder_pitch_link",
+        "left_elbow_link",
+        "right_elbow_link",
+        "left_wrist_yaw_link",
+        "right_wrist_yaw_link",
+    ]
+
+    source_names, retarget_indices = get_robot_retarget_indices(config, link_names)
+
+    assert source_names == tuple(mapping.source_keypoint for mapping in config.link_mapping)
+    assert retarget_indices.tolist() == list(range(15))
+
+
+def test_build_retarget_mask_is_symmetric_and_uses_pair_weights():
+    config = get_retarget_config("g1")
+    source_names = tuple(mapping.source_keypoint for mapping in config.link_mapping)
+
+    mask = build_retarget_mask(config, source_names)
+
+    left_shoulder = source_names.index("left_shoulder")
+    left_elbow = source_names.index("left_elbow")
+    pelvis = source_names.index("pelvis")
+    assert float(mask[left_shoulder, left_elbow]) == 1.0
+    assert float(mask[left_elbow, left_shoulder]) == 1.0
+    assert float(mask[pelvis, left_shoulder]) == 0.0

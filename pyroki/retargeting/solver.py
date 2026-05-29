@@ -179,3 +179,34 @@ def save_contact_labels(
     foot_contacts = onp.stack([left_contacts, right_contacts], axis=-1)
     onp.savez_compressed(output_path, foot_contacts=foot_contacts)
     print(f"Saved contact labels to {output_path} with shape {foot_contacts.shape}")
+
+
+def get_robot_retarget_indices(
+    config: PyrokiRetargetConfig,
+    link_names: list[str] | tuple[str, ...],
+):
+    import jax.numpy as jnp
+
+    source_names: list[str] = []
+    robot_indices: list[int] = []
+    for mapping in config.link_mapping:
+        source_names.append(mapping.source_keypoint)
+        robot_indices.append(link_names.index(mapping.robot_link))
+    return tuple(source_names), jnp.array(robot_indices)
+
+
+def build_retarget_mask(config: PyrokiRetargetConfig, source_names: tuple[str, ...]):
+    import jax.numpy as jnp
+
+    n_retarget = len(source_names)
+    retarget_mask = jnp.zeros((n_retarget, n_retarget))
+    for pair in config.local_alignment_pairs:
+        retarget_idx_a = source_names.index(pair.source_a)
+        retarget_idx_b = source_names.index(pair.source_b)
+        retarget_mask = retarget_mask.at[retarget_idx_a, retarget_idx_b].set(
+            pair.weight
+        )
+        retarget_mask = retarget_mask.at[retarget_idx_b, retarget_idx_a].set(
+            pair.weight
+        )
+    return retarget_mask
