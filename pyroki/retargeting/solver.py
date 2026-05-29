@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from functools import lru_cache, partial
+from functools import lru_cache
 from pathlib import Path
 import time
 from typing import Tuple, TypedDict
@@ -965,9 +965,56 @@ if _SOLVER_IMPORT_ERROR is None:
 
     @lru_cache(maxsize=None)
     def _solve_retargeting_jit(max_iterations: int):
-        return jdc.jit(
-            partial(_solve_retargeting_impl, max_iterations=max_iterations)
-        )
+        @jdc.jit
+        def solve_retargeting_with_iteration_limit(
+            robot: pk.Robot,
+            robot_coll: pk.collision.RobotCollision | None,
+            target_keypoints: jnp.ndarray,
+            target_orientations: jnp.ndarray,
+            left_foot_contact: jnp.ndarray,
+            right_foot_contact: jnp.ndarray,
+            joint_retarget_indices: jnp.ndarray,
+            retarget_mask: jnp.ndarray,
+            weights: SolverWeights,
+            foot_indices: jnp.ndarray,
+            left_wrist_robot_idx: jnp.ndarray,
+            right_wrist_robot_idx: jnp.ndarray,
+            torso_link_idx: int,
+            hand_aux_offset: jnp.ndarray,
+            torso_aux_offset: jnp.ndarray,
+            keypoint_weight_indices: jnp.ndarray,
+            keypoint_weight_multipliers: jnp.ndarray,
+            rest_penalty_joint_indices: jnp.ndarray,
+            max_joint_velocity: float,
+            subsample_factor: int = 1,
+            input_fps: float = 30.0,
+        ) -> Tuple[jaxlie.SE3, jnp.ndarray]:
+            return _solve_retargeting_impl(
+                robot=robot,
+                robot_coll=robot_coll,
+                target_keypoints=target_keypoints,
+                target_orientations=target_orientations,
+                left_foot_contact=left_foot_contact,
+                right_foot_contact=right_foot_contact,
+                joint_retarget_indices=joint_retarget_indices,
+                retarget_mask=retarget_mask,
+                weights=weights,
+                foot_indices=foot_indices,
+                left_wrist_robot_idx=left_wrist_robot_idx,
+                right_wrist_robot_idx=right_wrist_robot_idx,
+                torso_link_idx=torso_link_idx,
+                hand_aux_offset=hand_aux_offset,
+                torso_aux_offset=torso_aux_offset,
+                keypoint_weight_indices=keypoint_weight_indices,
+                keypoint_weight_multipliers=keypoint_weight_multipliers,
+                rest_penalty_joint_indices=rest_penalty_joint_indices,
+                max_joint_velocity=max_joint_velocity,
+                subsample_factor=subsample_factor,
+                input_fps=input_fps,
+                max_iterations=max_iterations,
+            )
+
+        return solve_retargeting_with_iteration_limit
 
     def solve_retargeting(
         robot: pk.Robot,
