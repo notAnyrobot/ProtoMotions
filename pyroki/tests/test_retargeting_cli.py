@@ -3,6 +3,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import numpy as np
+
 PYROKI_SCRIPT_DIR = Path(__file__).resolve().parents[1]
 if str(PYROKI_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(PYROKI_SCRIPT_DIR))
@@ -106,3 +108,44 @@ def test_canonical_script_help_works_without_pyroki_runtime_import():
 
     assert "--robot-type {g1,h1_2}" in result.stdout
     assert "--keypoints-folder-path" in result.stdout
+
+
+def test_canonical_cli_contacts_only_writes_current_schema(tmp_path):
+    keypoints_dir = tmp_path / "keypoints"
+    contacts_dir = tmp_path / "contacts"
+    keypoints_dir.mkdir()
+    positions = np.zeros((3, 18, 3), dtype=np.float32)
+    orientations = np.repeat(np.eye(3, dtype=np.float32)[None, None], 3 * 18, axis=0)
+    orientations = orientations.reshape(3, 18, 3, 3)
+    np.save(
+        keypoints_dir / "walk.npy",
+        {
+            "positions": positions,
+            "orientations": orientations,
+            "left_foot_contacts": np.array([[1, 1], [0, 0], [0, 0]], dtype=bool),
+            "right_foot_contacts": np.array([[0, 0], [1, 1], [1, 1]], dtype=bool),
+        },
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "pyroki/batch_retarget_from_keypoints.py",
+            "--robot-type",
+            "g1",
+            "--keypoints-folder-path",
+            str(keypoints_dir),
+            "--save-contacts-only",
+            "--contacts-dir",
+            str(contacts_dir),
+            "--target-raw-frames",
+            "3",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    assert "Running in save-contacts-only mode" in result.stdout
+    saved = np.load(contacts_dir / "walk_contacts.npz")
+    assert saved["foot_contacts"].shape == (3, 2)
