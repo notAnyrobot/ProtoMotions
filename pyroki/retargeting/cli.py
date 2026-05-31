@@ -37,8 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--robot-type",
-        required=True,
+        default="g1",
         choices=supported_robot_types(),
+        help="Target robot type (default: g1).",
     )
     parser.add_argument(
         "--no-visualize",

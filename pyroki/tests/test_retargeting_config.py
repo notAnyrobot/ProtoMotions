@@ -60,6 +60,24 @@ H1_2_LINK_MAPPING = (
     ("right_wrist", "right_wrist_yaw_link"),
 )
 
+ASTRO_LINK_MAPPING = (
+    ("pelvis", "pelvis"),
+    ("left_hip", "left_hip_roll_link"),
+    ("right_hip", "right_hip_roll_link"),
+    ("left_knee", "left_knee_link"),
+    ("right_knee", "right_knee_link"),
+    ("left_ankle", "left_ankle_roll_link"),
+    ("right_ankle", "right_ankle_roll_link"),
+    ("left_foot", "left_foot_link"),
+    ("right_foot", "right_foot_link"),
+    ("left_shoulder", "left_shoulder_roll_link"),
+    ("right_shoulder", "right_shoulder_roll_link"),
+    ("left_elbow", "left_elbow_link"),
+    ("right_elbow", "right_elbow_link"),
+    ("left_wrist", "left_wrist_yaw_link"),
+    ("right_wrist", "right_wrist_yaw_link"),
+)
+
 COMMON_WEIGHTS = {
     "local_alignment": 1.0,
     "root_smoothness": 1.0,
@@ -107,7 +125,7 @@ def _assert_mapping_update_does_not_leak(config, mapping_name, key, new_value):
 
 
 def test_supported_robot_types_are_stable():
-    assert supported_robot_types() == ("g1", "h1_2")
+    assert supported_robot_types() == ("g1", "h1_2", "astro")
 
 
 def test_factory_configs_cannot_be_mutated_globally():
@@ -196,9 +214,45 @@ def test_h1_2_config_copies_current_script_constants():
     _assert_shared_invariants(config)
 
 
+def test_astro_config_copies_current_script_constants():
+    config = get_retarget_config("astro")
+
+    assert config.robot_type == "astro"
+    assert config.display_name == "Astro"
+    assert config.urdf_path.as_posix().endswith(
+        "protomotions/data/assets/urdf/for_retargeting/astro_v1.urdf"
+    )
+    assert config.mesh_dir.as_posix().endswith("protomotions/data/assets/astro/meshes")
+    assert config.source_scales["smpl"].lower_body == (0.8, 1.2, 0.8)
+    assert config.source_scales["smpl"].upper_body == (0.7, 0.8, 0.65)
+    assert config.source_scales["rigv1"].lower_body == (1.0, 1.2, 0.8)
+    assert config.source_scales["rigv1"].upper_body == (0.9, 0.9, 0.8)
+    assert "lafan" not in config.source_scales
+    assert config.weights.global_alignment == 4.0
+    assert config.weights.as_dict() == COMMON_WEIGHTS | {"global_alignment": 4.0}
+    assert config.hand_aux_offset == (0.15, 0.0, 0.0)
+    assert config.torso_link_name == "torso_link"
+    assert config.torso_aux_offset == (0.15, 0.0, -0.3)
+    assert config.rest_penalty_joint_names == (
+        "waist_roll_joint",
+        "right_wrist_pitch_joint",
+        "left_wrist_pitch_joint",
+    )
+    assert _link_mapping_as_tuples(config) == ASTRO_LINK_MAPPING
+    assert dict(config.global_alignment_keypoint_weights) == {
+        "left_hip": 0.25,
+        "right_hip": 0.25,
+        "left_elbow": 0.25,
+        "right_elbow": 0.25,
+        "left_hand_aux": 0.25,
+        "right_hand_aux": 0.25,
+    }
+    _assert_shared_invariants(config)
+
+
 def test_unknown_robot_type_lists_supported_values():
     with pytest.raises(
         ValueError,
-        match="Unsupported robot type 'atlas'. Supported: g1, h1_2",
+        match="Unsupported robot type 'atlas'. Supported: g1, h1_2, astro",
     ):
         get_retarget_config("atlas")

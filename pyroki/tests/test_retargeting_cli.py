@@ -56,6 +56,18 @@ def test_parser_accepts_existing_args_plus_robot_type(tmp_path):
     assert args.visualize is False
 
 
+def test_parser_defaults_robot_type_to_g1(tmp_path):
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "--keypoints-folder-path",
+            str(tmp_path / "keypoints"),
+        ]
+    )
+
+    assert args.robot_type == "g1"
+
+
 def test_main_builds_config_and_options(monkeypatch, tmp_path):
     captured = {}
 
@@ -102,6 +114,29 @@ def test_main_builds_config_and_options(monkeypatch, tmp_path):
     )
 
 
+def test_main_uses_g1_config_when_robot_type_is_omitted(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(config, options):
+        captured["config"] = config
+        captured["options"] = options
+        return 0
+
+    monkeypatch.setattr("retargeting.cli.run_batch_retargeting", fake_run)
+
+    result = main(
+        [
+            "--keypoints-folder-path",
+            str(tmp_path / "keypoints"),
+            "--no-visualize",
+        ]
+    )
+
+    assert result == 0
+    assert captured["config"] == get_retarget_config("g1")
+    assert captured["options"].keypoints_folder_path == tmp_path / "keypoints"
+
+
 def test_canonical_script_help_works_without_pyroki_runtime_import():
     result = subprocess.run(
         [sys.executable, "pyroki/batch_retarget_from_keypoints.py", "--help"],
@@ -110,7 +145,7 @@ def test_canonical_script_help_works_without_pyroki_runtime_import():
         capture_output=True,
     )
 
-    assert "--robot-type {g1,h1_2}" in result.stdout
+    assert "--robot-type {g1,h1_2,astro}" in result.stdout
     assert "--keypoints-folder-path" in result.stdout
 
 
@@ -196,7 +231,7 @@ def test_g1_wrapper_help_warns_and_delegates_to_canonical_cli():
     )
 
     assert "deprecated" in result.stderr.lower()
-    assert "--robot-type {g1,h1_2}" in result.stdout
+    assert "--robot-type {g1,h1_2,astro}" in result.stdout
 
 
 def test_h1_2_wrapper_help_warns_and_delegates_to_canonical_cli():
@@ -208,7 +243,7 @@ def test_h1_2_wrapper_help_warns_and_delegates_to_canonical_cli():
     )
 
     assert "deprecated" in result.stderr.lower()
-    assert "--robot-type {g1,h1_2}" in result.stdout
+    assert "--robot-type {g1,h1_2,astro}" in result.stdout
 
 
 def test_g1_wrapper_robot_type_wins_over_conflicting_user_arg(monkeypatch):
