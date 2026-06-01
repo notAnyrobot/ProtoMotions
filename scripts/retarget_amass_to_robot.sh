@@ -2,12 +2,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 The ProtoMotions Developers
 # SPDX-License-Identifier: Apache-2.0
 #
-# Convenience script to retarget AMASS SMPL motions to a robot (G1 or H1_2)
+# Convenience script to retarget AMASS SMPL motions to a robot.
 #
 # IMPORTANT: ProtoMotions and PyRoki require separate Python environments.
-# You must provide paths to both Python interpreters.
+# You must provide paths to both Python interpreters or environment directories.
 #
-# Usage: ./scripts/retarget_amass_to_robot.sh <proto_python> <pyroki_python> <amass_pt_file> <robot_type> [skip_freq]
+# Usage: ./scripts/retarget_amass_to_robot.sh <proto_python_or_env> <pyroki_python_or_env> <amass_pt_file> <robot_type> [skip_freq]
 #
 # Example:
 #   ./scripts/retarget_amass_to_robot.sh \
@@ -16,23 +16,49 @@
 #       /path/to/amass.pt g1 15
 #
 # Arguments:
-#   proto_python:  Path to Python interpreter with ProtoMotions installed
-#   pyroki_python: Path to Python interpreter with PyRoki installed
+#   proto_python:  Path to Python interpreter or env dir with ProtoMotions installed
+#   pyroki_python: Path to Python interpreter or env dir with PyRoki installed
 #   amass_pt_file: Path to packaged AMASS MotionLib .pt file (outputs saved in same directory)
-#   robot_type:    Target robot: 'g1' or 'h1_2'
+#   robot_type:    Target robot: 'g1', 'h1_2', or 'astro'
 #   skip_freq:     (Optional) Skip every N motions for subset processing (default: 1 = all motions)
 
 set -e  # Exit on error
 
+SUPPORTED_ROBOT_TYPES_DISPLAY="'g1', 'h1_2', or 'astro'"
+
+is_supported_robot_type() {
+    case "$1" in
+        g1|h1_2|astro) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+resolve_python_path() {
+    local input_path="$1"
+    local label="$2"
+    local python_path="$input_path"
+
+    if [ -d "$input_path" ]; then
+        python_path="${input_path}/bin/python"
+    fi
+
+    if [ ! -f "$python_path" ]; then
+        echo "Error: ${label} Python not found: $input_path"
+        exit 1
+    fi
+
+    echo "$python_path"
+}
+
 # Parse arguments
 if [ $# -lt 4 ]; then
-    echo "Usage: $0 <proto_python> <pyroki_python> <amass_pt_file> <robot_type> [skip_freq]"
+    echo "Usage: $0 <proto_python_or_env> <pyroki_python_or_env> <amass_pt_file> <robot_type> [skip_freq]"
     echo ""
     echo "Arguments:"
-    echo "  proto_python   Path to Python interpreter with ProtoMotions installed"
-    echo "  pyroki_python  Path to Python interpreter with PyRoki installed"
+    echo "  proto_python   Path to Python interpreter or env dir with ProtoMotions installed"
+    echo "  pyroki_python  Path to Python interpreter or env dir with PyRoki installed"
     echo "  amass_pt_file  Path to packaged AMASS MotionLib .pt file (outputs saved in same dir)"
-    echo "  robot_type     Target robot: 'g1' or 'h1_2'"
+    echo "  robot_type     Target robot: $SUPPORTED_ROBOT_TYPES_DISPLAY"
     echo "  skip_freq      (Optional) Skip every N motions (default: 1 = all motions)"
     echo ""
     echo "Example:"
@@ -47,21 +73,14 @@ ROBOT_TYPE="$4"
 SKIP_FREQ="${5:-1}"
 
 # Validate robot type
-if [ "$ROBOT_TYPE" != "g1" ] && [ "$ROBOT_TYPE" != "h1_2" ]; then
-    echo "Error: robot_type must be 'g1' or 'h1_2'"
+if ! is_supported_robot_type "$ROBOT_TYPE"; then
+    echo "Error: robot_type must be $SUPPORTED_ROBOT_TYPES_DISPLAY"
     exit 1
 fi
 
-# Validate Python interpreters exist
-if [ ! -f "$PROTO_PYTHON" ]; then
-    echo "Error: ProtoMotions Python not found: $PROTO_PYTHON"
-    exit 1
-fi
-
-if [ ! -f "$PYROKI_PYTHON" ]; then
-    echo "Error: PyRoki Python not found: $PYROKI_PYTHON"
-    exit 1
-fi
+# Validate Python interpreters or env directories exist
+PROTO_PYTHON="$(resolve_python_path "$PROTO_PYTHON" "ProtoMotions")"
+PYROKI_PYTHON="$(resolve_python_path "$PYROKI_PYTHON" "PyRoki")"
 
 # Validate input file exists
 if [ ! -f "$AMASS_PT_FILE" ]; then
@@ -90,7 +109,7 @@ echo "=============================================="
 # Step 1: Extract keypoints from packaged MotionLib (uses ProtoMotions)
 echo ""
 echo "[Step 1/5] Extracting keypoints from SMPL motions..."
-$PROTO_PYTHON data/scripts/extract_retargeting_input_keypoints_from_packaged_motionlib.py \
+"$PROTO_PYTHON" data/scripts/extract_retargeting_input_keypoints_from_packaged_motionlib.py \
     "$AMASS_PT_FILE" \
     --output-path "$KEYPOINTS_DIR" \
     --skeleton-format smpl \
@@ -100,7 +119,7 @@ $PROTO_PYTHON data/scripts/extract_retargeting_input_keypoints_from_packaged_mot
 # Step 2: Run PyRoki retargeting (uses PyRoki)
 echo ""
 echo "[Step 2/5] Running PyRoki retargeting to ${ROBOT_TYPE^^}..."
-$PYROKI_PYTHON pyroki/batch_retarget_from_keypoints.py \
+"$PYROKI_PYTHON" pyroki/batch_retarget_from_keypoints.py \
     --robot-type "$ROBOT_TYPE" \
     --subsample-factor 1 \
     --keypoints-folder-path "$KEYPOINTS_DIR" \
@@ -112,7 +131,7 @@ $PYROKI_PYTHON pyroki/batch_retarget_from_keypoints.py \
 # Step 3: Extract contact labels from source motions (uses PyRoki)
 echo ""
 echo "[Step 3/5] Extracting foot contact labels from source SMPL motions..."
-$PYROKI_PYTHON pyroki/batch_retarget_from_keypoints.py \
+"$PYROKI_PYTHON" pyroki/batch_retarget_from_keypoints.py \
     --robot-type "$ROBOT_TYPE" \
     --subsample-factor 1 \
     --keypoints-folder-path "$KEYPOINTS_DIR" \
@@ -124,7 +143,7 @@ $PYROKI_PYTHON pyroki/batch_retarget_from_keypoints.py \
 # Step 4: Convert to ProtoMotions format with contact labels (uses ProtoMotions)
 echo ""
 echo "[Step 4/5] Converting to ProtoMotions format..."
-$PROTO_PYTHON data/scripts/convert_pyroki_retargeted_robot_motions_to_proto.py \
+"$PROTO_PYTHON" data/scripts/convert_pyroki_retargeted_robot_motions_to_proto.py \
     --retargeted-motion-dir "$RETARGETED_DIR" \
     --output-dir "$PROTO_DIR" \
     --robot-type "$ROBOT_TYPE" \
@@ -135,7 +154,7 @@ $PROTO_PYTHON data/scripts/convert_pyroki_retargeted_robot_motions_to_proto.py \
 # Step 5: Package into MotionLib (uses ProtoMotions)
 echo ""
 echo "[Step 5/5] Packaging into MotionLib..."
-$PROTO_PYTHON protomotions/components/motion_lib.py \
+"$PROTO_PYTHON" protomotions/components/motion_lib.py \
     --motion-path "$PROTO_DIR" \
     --output-file "$FINAL_PT"
 
