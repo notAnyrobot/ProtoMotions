@@ -34,8 +34,8 @@ ASTRO_RETARGET_CONFIG = PyrokiRetargetConfig(
     mesh_dir=REPO_ROOT / "protomotions/data/assets/astro/meshes",
     link_mapping=(
         LinkMapping("pelvis", "pelvis"),
-        LinkMapping("left_hip", "left_hip_roll_link"),
-        LinkMapping("right_hip", "right_hip_roll_link"),
+        LinkMapping("left_hip", "left_hip_pitch_link"),
+        LinkMapping("right_hip", "right_hip_pitch_link"),
         LinkMapping("left_knee", "left_knee_link"),
         LinkMapping("right_knee", "right_knee_link"),
         LinkMapping("left_ankle", "left_ankle_roll_link"),
@@ -50,7 +50,7 @@ ASTRO_RETARGET_CONFIG = PyrokiRetargetConfig(
         LinkMapping("right_wrist", "right_wrist_yaw_link"),
     ),
     source_scales=freeze_mapping({
-        "smpl": SourceScale(lower_body=(0.8, 1.2, 0.8), upper_body=(0.7, 0.8, 0.65)),
+        "smpl": SourceScale(lower_body=(0.7, 0.95, 0.8), upper_body=(0.9, 0.9, 0.8)),
         "rigv1": SourceScale(lower_body=(1.0, 1.2, 0.8), upper_body=(0.9, 0.9, 0.8)),
     }),
     weights=RetargetingWeights(
@@ -64,12 +64,12 @@ ASTRO_RETARGET_CONFIG = PyrokiRetargetConfig(
         foot_contact=30.0,
         foot_tilt=1.0,
     ),
-    hand_aux_offset=(0.15, 0.0, 0.0),
-    torso_link_name="torso_link",
-    torso_aux_offset=(0.15, 0.0, -0.3),
+    hand_aux_offset=(0.0, 0.0, 0.12),
+    torso_link_name="waist_roll_link", # torso_link
+    torso_aux_offset=(0.14, 0.0, -0.07),
     global_alignment_keypoint_weights=freeze_mapping({
-        "left_hip": 0.25,
-        "right_hip": 0.25,
+        # "left_hip": 0.25,
+        # "right_hip": 0.25,
         "left_elbow": 0.25,
         "right_elbow": 0.25,
         "left_hand_aux": 0.25,
