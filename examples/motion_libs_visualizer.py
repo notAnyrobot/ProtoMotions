@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 FPS = 30
+SUPPORTED_ROBOTS = ["g1", "rigv1", "h1_2", "smpl", "soma23", "astro"]
 
 # Parse arguments first (argparse is safe, doesn't import torch)
 parser = argparse.ArgumentParser(
@@ -46,9 +47,9 @@ parser.add_argument(
 parser.add_argument(
     "--robot",
     type=str,
-    choices=["g1", "rigv1", "h1_2", "smpl", "soma23"],
+    choices=SUPPORTED_ROBOTS,
     default="g1",
-    help="Robot to load (g1, rigv1, h1_2, smpl, or soma23)",
+    help="Robot to load (g1, rigv1, h1_2, smpl, soma23, or astro)",
 )
 parser.add_argument("--headless", action="store_true", help="Run in headless mode")
 parser.add_argument(
@@ -150,6 +151,9 @@ ROBOT_SPECS = {
         viz_bodies=[],
     ),
     "soma23": RobotSpec(
+        viz_bodies=[],
+    ),
+    "astro": RobotSpec(
         viz_bodies=[],
     ),
 }
