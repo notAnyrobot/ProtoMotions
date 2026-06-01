@@ -191,6 +191,17 @@ def apply_contact_labels_to_motion(
     )
 
 
+def get_robot_mjcf_path(robot_type: str, robot_cfg) -> Path:
+    # Keep converter-specific variants where they differ from the simulator config.
+    robot_mjcf_mapping = {
+        "g1": "mjcf/g1_bm_box_feet.xml",
+        "h1_2": "mjcf/h1_2.xml",
+    }
+
+    mjcf_filename = robot_mjcf_mapping.get(robot_type, robot_cfg.asset.asset_file_name)
+    return Path(robot_cfg.asset.asset_root) / mjcf_filename
+
+
 @app.command()
 def main(
     retargeted_motion_dir: Path = typer.Option(
@@ -233,22 +244,14 @@ def main(
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # Map robot types to their MJCF filenames
-    robot_mjcf_mapping = {
-        "g1": "g1_bm_box_feet.xml",
-        "h1_2": "h1_2.xml",
-    }
-
-    # Get kinematic info for the specified robot
-    mjcf_filename = robot_mjcf_mapping.get(robot_type, f"{robot_type}.xml")
-    mjcf_path = f"protomotions/data/assets/mjcf/{mjcf_filename}"
+    # Get robot config to find the asset path and foot link names.
+    robot_cfg = robot_config(robot_type)
+    mjcf_path = get_robot_mjcf_path(robot_type, robot_cfg)
     if not os.path.exists(mjcf_path):
         raise FileNotFoundError(f"MJCF file not found at {mjcf_path}")
 
-    kinematic_info = extract_kinematic_info(mjcf_path)
+    kinematic_info = extract_kinematic_info(str(mjcf_path))
 
-    # Get robot config to find foot link names (for contact labeling)
-    robot_cfg = robot_config(robot_type)
     left_foot_name = robot_cfg.common_naming_to_robot_body_names[
         "all_left_foot_bodies"
     ][0]
