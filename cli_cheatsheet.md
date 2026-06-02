@@ -7,7 +7,13 @@ android@ThinkStation-P3-Tower:~/Code/NVlabs/ProtoMotions$ ./scripts/retarget_sin
 ```
 
 ```bash
-(pyroki-cuda) android@ThinkStation-P3-Tower:~/Code/NVlabs/ProtoMotions$ python pyroki/batch_retarget_from_keypoints.py --keypoints-folder-path datasets/amass/motion_lib/train/keypoints-for-retarget/ --source-type smpl --subsample-factor 1 --save-contacts-only  --contacts-dir datasets/amass/motion_lib/train/contacts/ --skip-existing --robot-type g1
+(pyroki-cuda) android@ThinkStation-P3-Tower:~/Code/NVlabs/ProtoMotions$ python pyroki/batch_retarget_from_keypoints.py \
+  --robot-type astro \
+  --keypoints-folder-path datasets/amass/motion_lib/keypoints-for-retarget/test/ \
+  --output-dir datasets/dobot/astro/pyroki-retargeted/test/ \
+  --source-type smpl \
+  --subsample-factor 1 \
+  --no-visualize
 ```
 
 ```bash
@@ -24,4 +30,16 @@ android@ThinkStation-P3-Tower:~/Code/NVlabs/ProtoMotions$ ./scripts/retarget_sin
 
 ```bash
 (.venv_isaaclab) android@ThinkStation-P3-Tower:~/Code/NVlabs/ProtoMotions$ python protomotions/components/motion_lib.py --motion-path datasets/dobot/astro/proto/train/ --output-file datasets/dobot/astro/proto/amass-train.pt
+```
+
+
+```bash
+.venv_isaaclab/bin/python protomotions/train_agent.py \
+  --robot-name astro \
+  --simulator isaaclab \
+  --num-envs 4096 \
+  --batch-size 16384 \
+  --motion-file datasets/dobot/astro/proto/amass-test.pt \
+  --experiment-path data/pretrained_models/motion_tracker/g1-bones-deploy/experiment_config.py \
+  --experiment-name astro-motion-tracker-amass-test
 ```
