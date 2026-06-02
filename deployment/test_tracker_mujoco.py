@@ -116,6 +116,13 @@ Usage
         --motion data/motions/walk.motion \\
         --cache-motion --render
 
+    # Rendered runs show a translucent reference ghost using collision shapes
+    # by default. Shift it to the side if overlaying the policy robot is too dense:
+    python deployment/test_tracker_mujoco.py \\
+        --onnx  path/to/unified_pipeline.onnx \\
+        --motion data/motions/walk.motion \\
+        --render --reference-ghost-offset 0.6 0 0
+
     # Subsequent runs: cached motion, no protomotions import
     python deployment/test_tracker_mujoco.py \\
         --onnx  path/to/unified_pipeline.onnx \\
@@ -141,7 +148,6 @@ import sys
 
 import mujoco
 import numpy as np
-import onnxruntime as ort
 import yaml
 
 # Ensure the repo root is on sys.path so `deployment.*` imports work
@@ -160,6 +166,119 @@ from deployment.motion_utils import MotionPlayer
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
+
+
+class MissingDependencyError(RuntimeError):
+    """Raised when a runtime-only dependency is missing."""
+
+
+class ReferenceGhost:
+    """Passive visual-only robot that follows the reference motion."""
+
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        rgba: tuple[float, float, float, float] = (0.1, 0.85, 1.0, 0.32),
+        offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        geom_groups: tuple[int, ...] = (3,),
+    ):
+        self.model = model
+        self.data = data
+        self.rgba = np.asarray(rgba, dtype=np.float32)
+        self.offset = np.asarray(offset, dtype=np.float64)
+        self.geom_groups = set(geom_groups)
+        self.opt = mujoco.MjvOption()
+        self.opt.geomgroup[:] = 0
+        for group in geom_groups:
+            self.opt.geomgroup[group] = 1
+
+    def set_pose(self, motion_state: dict) -> None:
+        """Set the ghost model to one reference-motion frame."""
+        dof_pos = np.asarray(motion_state["dof_pos"], dtype=np.float64)
+        expected_dofs = self.model.nq - 7
+        if expected_dofs != dof_pos.shape[0]:
+            raise ValueError(
+                f"Ghost model expects {expected_dofs} DOFs, "
+                f"motion has {dof_pos.shape[0]}"
+            )
+
+        root_pos = np.asarray(motion_state["body_pos"][0], dtype=np.float64)
+        root_quat_xyzw = np.asarray(motion_state["body_rot"][0], dtype=np.float64)
+
+        self.data.qpos[0:3] = root_pos + self.offset
+        self.data.qpos[3:7] = root_quat_xyzw[[3, 0, 1, 2]]
+        self.data.qpos[7:] = dof_pos
+        self.data.qvel[:] = 0.0
+        mujoco.mj_forward(self.model, self.data)
+
+    def update_scene(
+        self,
+        scene: mujoco.MjvScene,
+        pert: mujoco.MjvPerturb | None = None,
+    ) -> None:
+        """Replace the viewer user scene with the current ghost pose."""
+        if pert is None:
+            pert = mujoco.MjvPerturb()
+        scene.ngeom = 0
+        mujoco.mjv_addGeoms(
+            self.model,
+            self.data,
+            self.opt,
+            pert,
+            int(mujoco.mjtCatBit.mjCAT_DYNAMIC),
+            scene,
+        )
+        write_idx = 0
+        for read_idx in range(scene.ngeom):
+            geom = scene.geoms[read_idx]
+            objid = int(geom.objid)
+            is_model_geom = (
+                int(geom.objtype) == int(mujoco.mjtObj.mjOBJ_GEOM)
+                and 0 <= objid < self.model.ngeom
+            )
+            if not is_model_geom:
+                continue
+            if int(self.model.geom_group[objid]) not in self.geom_groups:
+                continue
+            if write_idx != read_idx:
+                scene.geoms[write_idx] = geom
+            scene.geoms[write_idx].rgba[:] = self.rgba
+            write_idx += 1
+        scene.ngeom = write_idx
+
+
+def _create_onnx_session(onnx_path: str):
+    try:
+        import onnxruntime as ort
+    except ImportError as exc:
+        raise MissingDependencyError(
+            "onnxruntime is required to run tracker ONNX inference. "
+            "Install it in the active environment with `python -m pip install "
+            "onnxruntime`, or use `uv pip install --python <python> "
+            "onnxruntime` when pip is unavailable."
+        ) from exc
+
+    return ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+
+
+def _should_show_reference_ghost(
+    render: bool,
+    reference_ghost: bool | None,
+) -> bool:
+    if reference_ghost is None:
+        return render
+    return reference_ghost
+
+
+def _reference_ghost_groups_for_mode(mode: str) -> tuple[int, ...]:
+    if mode == "collision":
+        return (3,)
+    if mode == "mesh":
+        return (1,)
+    if mode == "all":
+        return (1, 3)
+    raise ValueError(f"Unsupported reference ghost mode: {mode}")
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +581,10 @@ def run(
     render: bool = False,
     realtime: bool = True,
     action_ema_alpha: float | None = None,
+    reference_ghost: bool | None = None,
+    reference_ghost_mode: str = "collision",
+    reference_ghost_alpha: float = 0.32,
+    reference_ghost_offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
 ) -> None:
     """Run the tracker policy in a MuJoCo simulation loop.
 
@@ -487,6 +610,16 @@ def run(
         ``a_applied = alpha * a_policy + (1 - alpha) * a_prev``.
         Set to 1.0 to disable filtering.  If None, loads from the YAML
         metadata (``control.action_ema_alpha``).
+    reference_ghost:
+        If True, draw a translucent visual-only robot at the reference
+        motion pose.  If None, this is enabled when rendering.
+    reference_ghost_mode:
+        Which MJCF geom groups to draw for the ghost. ``collision`` draws
+        group 3, ``mesh`` draws group 1, and ``all`` draws both.
+    reference_ghost_alpha:
+        Alpha channel for the reference ghost.
+    reference_ghost_offset:
+        XYZ offset applied to the ghost root position for side-by-side debug.
     """
     onnx_path  = str(onnx_path)
     yaml_path  = onnx_path.replace(".onnx", ".yaml")
@@ -536,7 +669,7 @@ def run(
     # ------------------------------------------------------------------
     # Load ONNX session
     # ------------------------------------------------------------------
-    session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+    session = _create_onnx_session(onnx_path)
     actual_in_names  = [inp.name for inp in session.get_inputs()]
     actual_out_names = [out.name for out in session.get_outputs()]
     log.info(f"ONNX inputs:  {actual_in_names}")
@@ -587,6 +720,8 @@ def run(
     # Optional viewer
     # ------------------------------------------------------------------
     viewer = None
+    ghost = None
+    show_reference_ghost = _should_show_reference_ghost(render, reference_ghost)
     if render:
         try:
             from mujoco import viewer as mj_viewer
@@ -604,6 +739,29 @@ def run(
         except Exception as e:
             log.warning(f"Could not launch viewer: {e}")
             viewer = None
+
+    if viewer is not None and show_reference_ghost:
+        ghost_geom_groups = _reference_ghost_groups_for_mode(reference_ghost_mode)
+        ghost_model, ghost_data = load_mujoco_model(
+            mjcf_path,
+            stiffness,
+            damping,
+            physics_dt,
+        )
+        ghost = ReferenceGhost(
+            model=ghost_model,
+            data=ghost_data,
+            rgba=(0.1, 0.85, 1.0, reference_ghost_alpha),
+            offset=reference_ghost_offset,
+            geom_groups=ghost_geom_groups,
+        )
+        log.info(
+            "Reference ghost enabled "
+            f"(mode={reference_ghost_mode}, "
+            f"groups={list(ghost_geom_groups)}, "
+            f"alpha={reference_ghost_alpha}, "
+            f"offset={list(reference_ghost_offset)})"
+        )
 
     # ------------------------------------------------------------------
     # PD target acceleration clamp
@@ -752,6 +910,14 @@ def run(
             if viewer is not None:
                 if not viewer.is_running():
                     break
+                if ghost is not None and viewer.user_scn is not None:
+                    ghost_frame_idx = min(frame_idx + 1, player.total_frames - 1)
+                    ghost.set_pose(player.get_state_at_frame(ghost_frame_idx))
+                    with viewer.lock():
+                        ghost.update_scene(
+                            viewer.user_scn,
+                            pert=viewer.perturb,
+                        )
                 viewer.sync()
 
             # ---- real-time pacing ----
@@ -855,6 +1021,38 @@ def _parse_args():
             "(control.action_ema_alpha). 1.0 = no filtering, lower = more smoothing."
         ),
     )
+    p.add_argument(
+        "--reference-ghost",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Show a translucent visual-only reference robot in the viewer. "
+            "Default is enabled with --render and disabled without --render."
+        ),
+    )
+    p.add_argument(
+        "--reference-ghost-alpha",
+        type=float,
+        default=0.32,
+        help="Opacity for the reference ghost robot",
+    )
+    p.add_argument(
+        "--reference-ghost-mode",
+        choices=("collision", "mesh", "all"),
+        default="collision",
+        help=(
+            "Geometry used for the reference ghost. collision uses MJCF "
+            "collision shapes, mesh uses visual meshes, all draws both."
+        ),
+    )
+    p.add_argument(
+        "--reference-ghost-offset",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        default=(0.0, 0.0, 0.0),
+        help="XYZ offset for the reference ghost root position",
+    )
     return p.parse_args()
 
 
@@ -862,15 +1060,22 @@ if __name__ == "__main__":
     args = _parse_args()
     # Default: loop forever with --render, once without
     num_loops = args.loops if args.loops is not None else (10_000_000 if args.render else 1)
-    run(
-        onnx_path=args.onnx,
-        motion_file=args.motion,
-        cache_motion=args.cache_motion,
-        num_loops=num_loops,
-        render=args.render,
-        realtime=not args.no_realtime,
-        action_ema_alpha=args.action_ema_alpha,
-    )
+    try:
+        run(
+            onnx_path=args.onnx,
+            motion_file=args.motion,
+            cache_motion=args.cache_motion,
+            num_loops=num_loops,
+            render=args.render,
+            realtime=not args.no_realtime,
+            action_ema_alpha=args.action_ema_alpha,
+            reference_ghost=args.reference_ghost,
+            reference_ghost_mode=args.reference_ghost_mode,
+            reference_ghost_alpha=args.reference_ghost_alpha,
+            reference_ghost_offset=tuple(args.reference_ghost_offset),
+        )
+    except MissingDependencyError as exc:
+        raise SystemExit(str(exc)) from exc
     # Force clean exit — avoids GLXBadContext segfault from MuJoCo's
     # atexit GL context teardown on some Linux drivers.
     os._exit(0)
