@@ -50,7 +50,7 @@ ASTRO_RETARGET_CONFIG = PyrokiRetargetConfig(
         LinkMapping("right_wrist", "right_wrist_yaw_link"),
     ),
     source_scales=freeze_mapping({
-        "smpl": SourceScale(lower_body=(0.7, 0.95, 0.8), upper_body=(0.9, 0.9, 0.8)),
+        "smpl": SourceScale(lower_body=(0.6, 1.0, 0.8), upper_body=(0.85, 0.95, 0.8)),
         "rigv1": SourceScale(lower_body=(1.0, 1.2, 0.8), upper_body=(0.9, 0.9, 0.8)),
     }),
     weights=RetargetingWeights(
@@ -64,9 +64,9 @@ ASTRO_RETARGET_CONFIG = PyrokiRetargetConfig(
         foot_contact=30.0,
         foot_tilt=1.0,
     ),
-    hand_aux_offset=(0.0, 0.0, 0.12),
+    hand_aux_offset=(0.0, 0.0, 0.14),
     torso_link_name="waist_roll_link", # torso_link
-    torso_aux_offset=(0.14, 0.0, -0.07),
+    torso_aux_offset=(0.13, 0.0, -0.04),
     global_alignment_keypoint_weights=freeze_mapping({
         # "left_hip": 0.25,
         # "right_hip": 0.25,
