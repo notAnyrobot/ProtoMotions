@@ -56,6 +56,45 @@ log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 
 
+def _read_onnx_io_names(
+    onnx_path: Path,
+    fallback_input_names: list[str],
+    fallback_output_names: list[str],
+) -> tuple[list[str], list[str]]:
+    """Read model input/output names without requiring onnxruntime."""
+    try:
+        import onnx
+    except ImportError:
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            log.warning(
+                "Neither onnx nor onnxruntime is installed; using requested "
+                "ONNX input/output names for YAML metadata"
+            )
+            return list(fallback_input_names), list(fallback_output_names)
+
+        session = ort.InferenceSession(
+            str(onnx_path), providers=["CPUExecutionProvider"]
+        )
+        return (
+            [inp.name for inp in session.get_inputs()],
+            [out.name for out in session.get_outputs()],
+        )
+
+    model = onnx.load(str(onnx_path))
+    initializer_names = {initializer.name for initializer in model.graph.initializer}
+    input_names = [
+        value.name
+        for value in model.graph.input
+        if value.name not in initializer_names
+    ]
+    output_names = [value.name for value in model.graph.output]
+    return input_names or list(fallback_input_names), output_names or list(
+        fallback_output_names
+    )
+
+
 # ---------------------------------------------------------------------------
 # MockContext
 # ---------------------------------------------------------------------------
@@ -431,11 +470,11 @@ def export_tracker(
     # ------------------------------------------------------------------
     # 11. Read back actual ONNX names (ONNX may rename inputs)
     # ------------------------------------------------------------------
-    import onnxruntime as ort
-
-    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-    actual_in_names  = [inp.name for inp in session.get_inputs()]
-    actual_out_names = [out.name for out in session.get_outputs()]
+    actual_in_names, actual_out_names = _read_onnx_io_names(
+        onnx_path,
+        fallback_input_names=onnx_input_names,
+        fallback_output_names=onnx_output_names,
+    )
 
     # Build onnx_name -> semantic_key mapping
     sanitized_to_key = {_sanitize(k): k for k in obs_input_keys}
@@ -457,28 +496,38 @@ def export_tracker(
     # 12. Validate with onnxruntime
     # ------------------------------------------------------------------
     if validate:
-        import numpy as np
+        try:
+            import numpy as np
+            import onnxruntime as ort
+        except ImportError as exc:
+            missing = exc.name or "onnxruntime"
+            log.warning(f"{missing} not installed, skipping ONNX validation")
+        else:
+            log.info("Validating with onnxruntime ...")
+            session = ort.InferenceSession(
+                str(onnx_path), providers=["CPUExecutionProvider"]
+            )
+            key_to_tensor = {k: t for k, t in zip(obs_input_keys, sample_inputs)}
+            ort_inputs = {
+                name: key_to_tensor[onnx_name_to_key[name]].detach().numpy()
+                for name in actual_in_names
+                if name in onnx_name_to_key
+            }
+            ort_outputs = session.run(actual_out_names, ort_inputs)
 
-        log.info("Validating with onnxruntime ...")
-        key_to_tensor = {k: t for k, t in zip(obs_input_keys, sample_inputs)}
-        ort_inputs = {
-            name: key_to_tensor[onnx_name_to_key[name]].detach().numpy()
-            for name in actual_in_names
-            if name in onnx_name_to_key
-        }
-        ort_outputs = session.run(actual_out_names, ort_inputs)
-
-        pytorch_outputs = [
-            actions.detach().numpy(),
-            pd_targets.detach().numpy(),
-            stiffness_t.detach().numpy(),
-            damping_t.detach().numpy(),
-        ]
-        for i, (name, pt_out) in enumerate(zip(onnx_output_names, pytorch_outputs)):
-            diff = np.abs(ort_outputs[i] - pt_out).max()
-            status = "OK" if diff < 1e-4 else "WARN"
-            log.info(f"  {status}  {name}: max_diff = {diff:.2e}")
-        log.info("Validation complete")
+            pytorch_outputs = [
+                actions.detach().numpy(),
+                pd_targets.detach().numpy(),
+                stiffness_t.detach().numpy(),
+                damping_t.detach().numpy(),
+            ]
+            for i, (name, pt_out) in enumerate(
+                zip(onnx_output_names, pytorch_outputs)
+            ):
+                diff = np.abs(ort_outputs[i] - pt_out).max()
+                status = "OK" if diff < 1e-4 else "WARN"
+                log.info(f"  {status}  {name}: max_diff = {diff:.2e}")
+            log.info("Validation complete")
 
     # ------------------------------------------------------------------
     # 13. Build and write rich YAML metadata
