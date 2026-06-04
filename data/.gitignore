@@ -1,3 +1,4 @@
 amass/*.pkl
 smpl/SMPL*.pkl
 smpl/SMPLX*.pkl
+motion_for_trackers/astro_amass-test.pt
