@@ -1,4 +1,6 @@
-FROM nvcr.io/nvidian/isaac-lab:IsaacLab-release-2.3.0-latest-release-5-1
+FROM nvcr.io/nvidia/isaac-lab:2.3.0 AS isaaclab-base
+
+FROM nvcr.io/nvidia/isaac-lab:2.3.0
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -20,8 +22,28 @@ WORKDIR /workspace/protomotions
 # Copy protomotions requirements
 COPY requirements_isaaclab.txt .
 
-# Install remaining Python dependencies using IsaacLab's Python environment
-RUN /workspace/isaaclab/isaaclab.sh -p -m pip install --no-cache-dir -r requirements_isaaclab.txt
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_TIMEOUT=600
+ARG PIP_RETRIES=30
+
+# Install remaining Python dependencies using IsaacLab's Python environment.
+# Keep pip's download cache across Docker rebuilds so slow/failed downloads can resume.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /workspace/isaaclab/isaaclab.sh -p -m pip install \
+    --timeout "${PIP_TIMEOUT}" \
+    --retries "${PIP_RETRIES}" \
+    --prefer-binary \
+    --index-url "${PIP_INDEX_URL}" \
+    -r requirements_isaaclab.txt
+
+# Isaac Sim's Torch and pip vendored packaging modules symlink into this
+# prebundle. A broad pip install can remove it while resolving dependencies.
+COPY --from=isaaclab-base \
+    /workspace/isaaclab/_isaac_sim/exts/omni.isaac.core_archive/pip_prebundle/packaging \
+    /workspace/isaaclab/_isaac_sim/exts/omni.isaac.core_archive/pip_prebundle/packaging
+COPY --from=isaaclab-base \
+    /workspace/isaaclab/_isaac_sim/exts/omni.isaac.core_archive/pip_prebundle/packaging-23.0.dist-info \
+    /workspace/isaaclab/_isaac_sim/exts/omni.isaac.core_archive/pip_prebundle/packaging-23.0.dist-info
 
 # Don't copy or install protomotions here - it will be synced and installed from 
 # the experiment folder in train_slurm.py. This ensures we always use fresh code

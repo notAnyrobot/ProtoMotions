@@ -170,7 +170,7 @@ def create_parser():
         "--robot-name",
         type=str,
         required=True,
-        help="Name of the robot (e.g., 'g1', 'smpl')",
+        help="Name of the robot (e.g., 'g1', 'astro', 'smpl')",
     )
     parser.add_argument(
         "--simulator",
