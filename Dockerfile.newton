@@ -1,4 +1,5 @@
-FROM nvidia/cuda:12.4.0-devel-ubuntu22.04
+# FROM nvidia/cuda:12.4.0-devel-ubuntu22.04
+FROM nvcr.io/nvidia/cuda:12.4.0-devel-ubuntu22.04
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -14,18 +15,12 @@ RUN apt-get update && apt-get install -y \
     libglu1-mesa-dev \
     libgl1-mesa-dev \
     libosmesa6-dev \
-    xvfb \
     patchelf \
     ffmpeg \
     python3.10 \
     python3.10-dev \
     python3.10-venv \
     build-essential \
-    # X11 dev packages required for glfw/imgui-bundle
-    libxrandr-dev \
-    libxinerama-dev \
-    libxcursor-dev \
-    libxi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv to system-wide location (not user-local, for SLURM compatibility)
@@ -34,33 +29,60 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 # Set working directory
 WORKDIR /workspace
 
-# Create virtual environment with uv
-RUN uv venv --python 3.10 .venv
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_TIMEOUT=600
+ARG PIP_RETRIES=30
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124
+ARG NEWTON_VERSION=1.0.0
+ARG NEWTON_EXTRAS=sim
+
+# Create virtual environment with pip seeded so python -m pip works.
+RUN uv venv --python 3.10 --seed --index-url "${PIP_INDEX_URL}" .venv
 ENV VIRTUAL_ENV=/workspace/.venv
 ENV PATH="/workspace/.venv/bin:$PATH"
 
-# Install pip into the venv (so python -m pip works as fallback)
-RUN uv pip install pip
+RUN python -m pip --version
 
-# Install PyTorch with CUDA 12.4
-RUN uv pip install torch>=2.2 --index-url https://download.pytorch.org/whl/cu124
-
-# Install Newton 1.0 from PyPI (includes warp-lang, mujoco, mujoco-warp, viewer deps)
-RUN uv pip install "newton[examples]"
-
-# Copy protomotions requirements
+# Copy protomotions Newton requirements early so dependency pins can constrain Newton extras.
 WORKDIR /workspace/protomotions
 COPY requirements_newton.txt .
+WORKDIR /workspace
+
+# Install PyTorch with CUDA 12.4.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install \
+    --timeout "${PIP_TIMEOUT}" \
+    --retries "${PIP_RETRIES}" \
+    --prefer-binary \
+    --index-url "${TORCH_INDEX_URL}" \
+    "torch>=2.2"
+
+# Install the Newton version this repo is tested against. Default to headless simulation dependencies.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install \
+    --timeout "${PIP_TIMEOUT}" \
+    --retries "${PIP_RETRIES}" \
+    --prefer-binary \
+    --index-url "${PIP_INDEX_URL}" \
+    -c /workspace/protomotions/requirements_newton.txt \
+    "newton[${NEWTON_EXTRAS}]==${NEWTON_VERSION}"
+
+WORKDIR /workspace/protomotions
 
 # Install remaining Python dependencies (pins mujoco==3.5.0 to match Newton 1.0)
-RUN uv pip install --no-cache -r requirements_newton.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install \
+    --timeout "${PIP_TIMEOUT}" \
+    --retries "${PIP_RETRIES}" \
+    --prefer-binary \
+    --index-url "${PIP_INDEX_URL}" \
+    -r requirements_newton.txt
 
 # Don't copy or install protomotions here - it will be synced and installed from 
 # the experiment folder in train_slurm.py. This ensures we always use fresh code
 # and avoids conflicts between old Docker code and newly synced code.
 
-# Set up virtual display for headless rendering (pyglet/OpenGL)
-ENV DISPLAY=:99
+ENV MUJOCO_GL=osmesa
 
-# Default command - starts Xvfb virtual display then drops into bash
-CMD Xvfb :99 -screen 0 1024x768x24 & exec /bin/bash
+# Default command
+CMD ["/bin/bash"]

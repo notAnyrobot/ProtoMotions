@@ -1,6 +1,7 @@
 # Newton simulator: tested against Newton 1.0.0 (PyPI)
-# Install newton before these requirements: pip install "newton[examples]"
+# Install newton before these requirements: pip install "newton[sim]==1.0.0"
 mujoco==3.5.0
+mujoco-warp==3.5.0.2
 wheel
 tensordict==0.9.0
 lightning

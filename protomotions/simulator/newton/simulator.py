@@ -507,6 +507,15 @@ class NewtonSimulator(Simulator):
             self.model, self.model.joint_q, self.model.joint_qd, self.state_0
         )
 
+    @staticmethod
+    def _material_property_samples_for_assignment(
+        samples: Optional[torch.Tensor],
+        material_tensor: torch.Tensor,
+    ) -> Optional[torch.Tensor]:
+        if samples is None:
+            return None
+        return samples.to(device=material_tensor.device, dtype=material_tensor.dtype)
+
     def _apply_domain_randomization_if_needed(self) -> None:
         """Apply friction and center of mass domain randomization.
 
@@ -538,6 +547,14 @@ class NewtonSimulator(Simulator):
             body_indices = self._domain_randomization["friction"]["body_indices"]
             static_friction = self._domain_randomization["friction"]["static_friction"]
             restitution = self._domain_randomization["friction"]["restitution"]
+            static_friction = self._material_property_samples_for_assignment(
+                static_friction,
+                current_friction,
+            )
+            restitution = self._material_property_samples_for_assignment(
+                restitution,
+                current_restitution,
+            )
 
             num_buckets = static_friction.shape[0] if static_friction is not None else 0
 

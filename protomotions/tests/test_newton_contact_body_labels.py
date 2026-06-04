@@ -19,6 +19,7 @@ from fnmatch import fnmatch
 import pytest
 
 pytest.importorskip("newton")
+torch = pytest.importorskip("torch")
 
 from protomotions.simulator.newton.simulator import NewtonSimulator
 
@@ -62,3 +63,16 @@ def test_validate_contact_sensor_match_raises_on_zero_matches():
             ["left_ankle_roll_link", "*/left_ankle_roll_link"],
             matched_body_count=0,
         )
+
+
+def test_domain_randomization_samples_move_to_material_tensor_device():
+    material_tensor = torch.empty(2, device="cuda" if torch.cuda.is_available() else "cpu")
+    samples = torch.tensor([[0.2, 0.3], [0.8, 0.9]], device="cpu")
+
+    moved = NewtonSimulator._material_property_samples_for_assignment(
+        samples,
+        material_tensor,
+    )
+
+    assert moved.device == material_tensor.device
+    assert moved.dtype == material_tensor.dtype
