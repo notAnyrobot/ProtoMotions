@@ -2,16 +2,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 The ProtoMotions Developers
 # SPDX-License-Identifier: Apache-2.0
 #
-# Convenience launcher for ProtoMotions Isaac Lab Docker on HPC-2.
+# Convenience launcher for ProtoMotions Isaac Lab Docker on HPC.
 #
-# HPC-2 notes:
-# - Uses the normal Docker/NVIDIA runtime path: docker run --gpus ...
-# - Does NOT use the HPC-1 rootless workaround:
-#     --device=/dev/nvidia*
-#     mounted /data/$USER/nvidia-libs
-#     LD_LIBRARY_PATH=/host-nvidia-libs
-# - Intended repo path on HPC-2:
-#     /data/atom7/Code/ProtoMotions
+# The validated HPC host uses rootless Docker without the normal NVIDIA runtime.
+# GPU access is wired explicitly through /dev/nvidia* devices plus the host
+# NVIDIA libraries staged under /data/$USER/nvidia-libs. Set
+# PROTO_HPC_GPU_MODE=gpus on hosts where docker run --gpus works.
 
 set -euo pipefail
 
@@ -22,19 +18,24 @@ CONTAINER_REPO="${PROTO_CONTAINER_REPO:-/workspace/protomotions}"
 
 HPC_USER="${PROTO_HPC_USER:-$(id -un)}"
 DATA_ROOT="${PROTO_HPC_DATA_ROOT:-/data/$HPC_USER}"
-CACHE_ROOT="${PROTO_ISAACLAB_CACHE:-$DATA_ROOT/isaac_cache_hpc2}"
+CACHE_ROOT="${PROTO_ISAACLAB_CACHE:-$DATA_ROOT/isaac_cache}"
 
-GPU_SELECTION="${PROTO_HPC_GPUS:-all}"
+GPU_MODE="${PROTO_HPC_GPU_MODE:-${PROTO_GPU_MODE:-manual}}"
+GPU_SELECTION="${PROTO_HPC_GPUS:-${PROTO_GPUS:-all}}"
 CUDA_VISIBLE_OVERRIDE="${PROTO_CUDA_VISIBLE_DEVICES:-}"
+
+NVIDIA_LIBS="${PROTO_HPC_NVIDIA_LIBS:-$DATA_ROOT/nvidia-libs}"
+NVIDIA_SMI="${PROTO_HPC_NVIDIA_SMI:-/usr/bin/nvidia-smi}"
+DEV_DIR="${PROTO_HPC_DEV_DIR:-/dev}"
 
 SHM_SIZE="${PROTO_HPC_SHM_SIZE:-32g}"
 IPC_MODE="${PROTO_HPC_IPC_MODE:-private}"
 NETWORK_MODE="${PROTO_HPC_NETWORK_MODE:-host}"
 
-DATASET_ROOT="${PROTO_DATASET_ROOT:-}"
+DATASET_ROOT="${PROTO_DATASET_ROOT:-/data/share/motion_datasets/protomotions}"
 DATASET_READONLY="${PROTO_DATASET_READONLY:-1}"
 
-FIX_OWNERSHIP="${PROTO_FIX_OWNERSHIP:-1}"
+FIX_OWNERSHIP="${PROTO_FIX_OWNERSHIP:-0}"
 CHOWN_PATHS="${PROTO_CHOWN_PATHS:-results output wandb}"
 HOST_UID="${PROTO_HOST_UID:-$(id -u)}"
 HOST_GID="${PROTO_HOST_GID:-$(id -g)}"
@@ -65,14 +66,20 @@ Environment overrides:
   PROTO_HPC_DATA_ROOT         Large host data root. Default: $DATA_ROOT
   PROTO_ISAACLAB_CACHE        Isaac cache root. Default: $CACHE_ROOT
 
+  PROTO_HPC_GPU_MODE          manual, gpus, cdi, legacy, or none. Default: $GPU_MODE
+                              manual wires /dev/nvidia* plus staged host libraries.
   PROTO_HPC_GPUS              all, none, or comma-separated GPU IDs. Default: $GPU_SELECTION
                               Examples: all, 6, 0,1
+  PROTO_GPUS                  Compatibility alias for PROTO_HPC_GPUS.
   PROTO_CUDA_VISIBLE_DEVICES  Optional CUDA_VISIBLE_DEVICES value inside container.
+  PROTO_HPC_NVIDIA_LIBS       Manual-mode host NVIDIA library dir. Default: $NVIDIA_LIBS
+  PROTO_HPC_NVIDIA_SMI        Manual-mode host nvidia-smi. Default: $NVIDIA_SMI
+  PROTO_HPC_DEV_DIR           Manual-mode device dir. Default: $DEV_DIR
   PROTO_HPC_SHM_SIZE          Docker --shm-size value when IPC is private. Default: $SHM_SIZE
   PROTO_HPC_IPC_MODE          private or host. Default: $IPC_MODE
   PROTO_HPC_NETWORK_MODE      host, bridge, or none. Default: $NETWORK_MODE
 
-  PROTO_DATASET_ROOT          Optional dataset root mounted to the same absolute path.
+  PROTO_DATASET_ROOT          Dataset root mounted to the same absolute path. Default: $DATASET_ROOT
   PROTO_DATASET_READONLY      1 for read-only dataset mount, 0 for writable. Default: $DATASET_READONLY
 
   PROTO_CONTAINER_NAME        Optional Docker container name.
@@ -90,6 +97,8 @@ Examples:
   $0 print-config
   $0 nvidia-smi
   PROTO_HPC_GPUS=6 $0 shell
+  PROTO_HPC_GPUS=4,5,6,7 $0 shell
+  PROTO_HPC_GPU_MODE=gpus PROTO_HPC_GPUS=6 $0 shell
   PROTO_HPC_GPUS=6 PROTO_CONTAINER_NAME=proto_hpc2 $0 shell
   docker exec -it proto_hpc2 /bin/bash
   PROTO_HPC_GPUS=6 $0 reset
@@ -109,6 +118,7 @@ require_cmd() {
 
 validate_common_paths() {
     [ -d "$REPO" ] || fail "Repo path does not exist: $REPO"
+    [ -f "$REPO/protomotions/train_agent.py" ] || fail "PROTO_REPO does not look like the ProtoMotions repo root: $REPO"
 
     if [ -n "$DATASET_ROOT" ]; then
         [ -d "$DATASET_ROOT" ] || fail "Dataset root does not exist: $DATASET_ROOT"
@@ -125,37 +135,158 @@ validate_common_paths() {
         "$CACHE_ROOT/documents"
 }
 
-build_gpu_args() {
-    DOCKER_GPU_ARGS=()
-
+validate_gpu_selection() {
     case "$GPU_SELECTION" in
-        none)
-            ;;
-        all)
-            DOCKER_GPU_ARGS=(--gpus all)
+        none|all)
             ;;
         *)
             local selection="${GPU_SELECTION// /}"
             case "$selection" in
                 ''|*[!0-9,]*)
-                    fail "PROTO_HPC_GPUS must be all, none, or comma-separated GPU IDs such as 6 or 0,1"
+                    fail "PROTO_HPC_GPUS must be all, none, or comma-separated GPU IDs"
                     ;;
             esac
-            DOCKER_GPU_ARGS=(--gpus "device=$selection")
+            ;;
+    esac
+}
+
+build_gpu_ids() {
+    GPU_IDS=()
+
+    case "$GPU_SELECTION" in
+        none)
+            return 0
+            ;;
+        all)
+            local path
+            local name
+            local id
+            while IFS= read -r id; do
+                GPU_IDS+=("$id")
+            done < <(
+                for path in "$DEV_DIR"/nvidia[0-9]*; do
+                    [ -e "$path" ] || continue
+                    name="${path##*/}"
+                    id="${name#nvidia}"
+                    case "$id" in
+                        ''|*[!0-9]*)
+                            ;;
+                        *)
+                            printf "%s\n" "$id"
+                            ;;
+                    esac
+                done | sort -n
+            )
+            [ "${#GPU_IDS[@]}" -gt 0 ] || fail "No GPU devices found under $DEV_DIR for PROTO_HPC_GPUS=all"
+            ;;
+        *)
+            IFS=',' read -r -a GPU_IDS <<< "${GPU_SELECTION// /}"
+            ;;
+    esac
+}
+
+validate_gpu_file() {
+    local path="$1"
+    [ -e "$path" ] || fail "Required GPU device does not exist: $path"
+}
+
+validate_nvidia_libs() {
+    local lib
+    [ -d "$NVIDIA_LIBS" ] || fail "NVIDIA library dir does not exist: $NVIDIA_LIBS"
+    for lib in libcuda.so.1 libnvidia-ml.so.1 libnvidia-ptxjitcompiler.so.1; do
+        [ -e "$NVIDIA_LIBS/$lib" ] || fail "Missing NVIDIA library: $NVIDIA_LIBS/$lib"
+    done
+    [ -e "$NVIDIA_SMI" ] || fail "nvidia-smi binary does not exist: $NVIDIA_SMI"
+}
+
+build_gpu_args() {
+    DOCKER_GPU_ARGS=()
+    validate_gpu_selection
+
+    case "$GPU_MODE" in
+        none)
+            ;;
+        gpus)
+            case "$GPU_SELECTION" in
+                none)
+                    ;;
+                all)
+                    DOCKER_GPU_ARGS=(--gpus all)
+                    ;;
+                *)
+                    local selection="${GPU_SELECTION// /}"
+                    if [[ "$selection" == *,* ]]; then
+                        DOCKER_GPU_ARGS=(--gpus "\"device=$selection\"")
+                    else
+                        DOCKER_GPU_ARGS=(--gpus "device=$selection")
+                    fi
+                    ;;
+            esac
+            ;;
+        cdi)
+            case "$GPU_SELECTION" in
+                none)
+                    ;;
+                all)
+                    DOCKER_GPU_ARGS=(--device nvidia.com/gpu=all)
+                    ;;
+                *)
+                    DOCKER_GPU_ARGS=(--device "nvidia.com/gpu=${GPU_SELECTION// /}")
+                    ;;
+            esac
+            ;;
+        legacy)
+            if [ "$GPU_SELECTION" != "none" ]; then
+                DOCKER_GPU_ARGS=(--runtime=nvidia -e "NVIDIA_VISIBLE_DEVICES=$GPU_SELECTION")
+            fi
+            ;;
+        manual)
+            build_gpu_ids
+            if [ "$GPU_SELECTION" != "none" ]; then
+                validate_nvidia_libs
+                local id
+                for id in "${GPU_IDS[@]}"; do
+                    validate_gpu_file "$DEV_DIR/nvidia$id"
+                    DOCKER_GPU_ARGS+=(--device="$DEV_DIR/nvidia$id")
+                done
+                validate_gpu_file "$DEV_DIR/nvidiactl"
+                validate_gpu_file "$DEV_DIR/nvidia-uvm"
+                validate_gpu_file "$DEV_DIR/nvidia-uvm-tools"
+                DOCKER_GPU_ARGS+=(
+                    --device="$DEV_DIR/nvidiactl"
+                    --device="$DEV_DIR/nvidia-uvm"
+                    --device="$DEV_DIR/nvidia-uvm-tools"
+                    -v "$NVIDIA_LIBS:/host-nvidia-libs:ro"
+                    -v "$NVIDIA_SMI:/usr/bin/nvidia-smi:ro"
+                    -e LD_LIBRARY_PATH=/host-nvidia-libs
+                )
+            fi
+            ;;
+        *)
+            fail "PROTO_HPC_GPU_MODE must be one of: manual, gpus, cdi, legacy, none"
             ;;
     esac
 
     if [ -n "$CUDA_VISIBLE_OVERRIDE" ]; then
         DOCKER_GPU_ARGS+=(-e "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_OVERRIDE")
+    elif [ "$GPU_MODE" = "manual" ] && [ "$GPU_SELECTION" != "all" ] && [ "$GPU_SELECTION" != "none" ]; then
+        DOCKER_GPU_ARGS+=(-e "CUDA_VISIBLE_DEVICES=$(container_cuda_ordinals)")
     fi
 }
 
 build_runtime_args() {
     DOCKER_RUNTIME_ARGS=()
 
-    if [ "$DOCKER_RM" = "1" ]; then
-        DOCKER_RUNTIME_ARGS+=(--rm)
-    fi
+    case "$DOCKER_RM" in
+        1)
+            DOCKER_RUNTIME_ARGS+=(--rm)
+            ;;
+        0)
+            ;;
+        *)
+            fail "PROTO_DOCKER_RM must be 1 or 0"
+            ;;
+    esac
 
     if [ -n "$CONTAINER_NAME" ]; then
         DOCKER_RUNTIME_ARGS+=(--name "$CONTAINER_NAME")
@@ -333,7 +464,7 @@ nvidia-smi
 echo "===== CUDA DRIVER LOAD ====="
 /isaac-sim/python.sh -c '"'"'import ctypes; ctypes.CDLL("libcuda.so.1"); print("CUDA driver visible")'"'"'
 echo "===== ISAACLAB PYTHON / TORCH ====="
-/workspace/isaaclab/isaaclab.sh -p -c '"'"'import sys, torch; print("python", sys.executable); print("torch", torch.__version__); print("cuda", torch.cuda.is_available()); print("gpu", torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)'"'"'
+/workspace/isaaclab/isaaclab.sh -p -c '"'"'import os, sys, torch; print("python", sys.executable); print("torch", torch.__version__); print("cuda_visible", os.environ.get("CUDA_VISIBLE_DEVICES")); print("cuda", torch.cuda.is_available()); print("device_count", torch.cuda.device_count()); print("gpu", torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)'"'"'
 '
 }
 
@@ -387,6 +518,33 @@ set -euxo pipefail
 '
 }
 
+container_cuda_ordinals() {
+    local selected="${GPU_SELECTION// /}"
+    local ids=()
+    local visible=""
+    local index
+
+    IFS=',' read -r -a ids <<< "$selected"
+    for index in "${!ids[@]}"; do
+        if [ -n "$visible" ]; then
+            visible="$visible,$index"
+        else
+            visible="$index"
+        fi
+    done
+    echo "$visible"
+}
+
+resolved_cuda_visible() {
+    if [ -n "$CUDA_VISIBLE_OVERRIDE" ]; then
+        echo "$CUDA_VISIBLE_OVERRIDE"
+    elif [ "$GPU_MODE" = "manual" ] && [ "$GPU_SELECTION" != "all" ] && [ "$GPU_SELECTION" != "none" ]; then
+        container_cuda_ordinals
+    else
+        echo auto
+    fi
+}
+
 print_config() {
     cat <<CONFIG_EOF
 Repo:              $REPO
@@ -394,8 +552,12 @@ Image:             $IMAGE
 Container repo:    $CONTAINER_REPO
 Data root:         $DATA_ROOT
 Cache root:        $CACHE_ROOT
+GPU mode:          $GPU_MODE
 GPU selection:     $GPU_SELECTION
-CUDA visible:      ${CUDA_VISIBLE_OVERRIDE:-not set}
+CUDA visible:      $(resolved_cuda_visible)
+NVIDIA libs:       $NVIDIA_LIBS
+nvidia-smi:        $NVIDIA_SMI
+Device dir:        $DEV_DIR
 Network mode:      $NETWORK_MODE
 IPC mode:          $IPC_MODE
 Shared memory:     $([ "$IPC_MODE" = "private" ] && echo "$SHM_SIZE" || echo "host IPC")
@@ -407,9 +569,6 @@ Fix ownership:     $FIX_OWNERSHIP
 Chown paths:       $CHOWN_PATHS
 Host UID:GID:      ${HOST_UID}:${HOST_GID}
 Reset timeout:     $RESET_TIMEOUT
-
-Docker GPU args:
-  ${DOCKER_GPU_ARGS[*]:-(none)}
 CONFIG_EOF
 }
 
@@ -423,7 +582,6 @@ case "$COMMAND" in
         usage
         ;;
     print-config)
-        build_gpu_args
         print_config
         ;;
     nvidia-smi)
