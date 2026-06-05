@@ -13,6 +13,7 @@ DATASET_ROOT="${PROTO_DATASET_ROOT:-/media/android/data/motion_lib}"
 CACHE_DIR="${PROTO_NEWTON_CACHE:-$HOME/.cache/protomotions-newton}"
 CONTAINER_REPO="${PROTO_CONTAINER_REPO:-/workspace/protomotions}"
 GPU_MODE="${PROTO_GPU_MODE:-gpus}"
+GPU_SELECTION="${PROTO_GPUS:-all}"
 DATASET_READONLY="${PROTO_DATASET_READONLY:-1}"
 FIX_OWNERSHIP="${PROTO_FIX_OWNERSHIP:-1}"
 CHOWN_PATHS="${PROTO_CHOWN_PATHS:-results output wandb}"
@@ -49,6 +50,7 @@ Environment overrides:
   PROTO_NEWTON_CACHE             Host cache dir mounted to /root/.cache.
                                   Default: $CACHE_DIR
   PROTO_GPU_MODE                 gpus, cdi, legacy, or none. Default: $GPU_MODE
+  PROTO_GPUS                     all, none, or comma-separated GPU IDs. Default: $GPU_SELECTION
   PROTO_DATASET_READONLY         1 for read-only dataset mount, 0 for writable. Default: $DATASET_READONLY
   PROTO_FIX_OWNERSHIP            1 to chown artifact dirs after container exit, 0 to disable.
                                   Default: $FIX_OWNERSHIP
@@ -72,6 +74,7 @@ Examples:
   $0 nvidia-smi
   $0 smoke
   $0 python -c "import newton, torch; print(torch.cuda.is_available())"
+  PROTO_GPUS=4,5,6,7 $0 shell
   $0 train-debug
   $0 train-debug --training-max-steps 4096
   PROTO_NEWTON_TRAIN_NUM_ENVS=512 PROTO_NEWTON_TRAIN_BATCH_SIZE=1024 $0 train-debug
@@ -85,15 +88,53 @@ fail() {
 
 build_gpu_args() {
     DOCKER_GPU_ARGS=()
+    local selection="${GPU_SELECTION// /}"
+
+    case "$GPU_SELECTION" in
+        none|all)
+            ;;
+        *)
+            case "$selection" in
+                ''|*[!0-9,]*)
+                    fail "PROTO_GPUS must be all, none, or comma-separated GPU IDs"
+                    ;;
+            esac
+            ;;
+    esac
+
     case "$GPU_MODE" in
         gpus)
-            DOCKER_GPU_ARGS=(--gpus all)
+            case "$GPU_SELECTION" in
+                none)
+                    ;;
+                all)
+                    DOCKER_GPU_ARGS=(--gpus all)
+                    ;;
+                *)
+                    if [[ "$selection" == *,* ]]; then
+                        DOCKER_GPU_ARGS=(--gpus "\"device=$selection\"")
+                    else
+                        DOCKER_GPU_ARGS=(--gpus "device=$selection")
+                    fi
+                    ;;
+            esac
             ;;
         cdi)
-            DOCKER_GPU_ARGS=(--device nvidia.com/gpu=all)
+            case "$GPU_SELECTION" in
+                none)
+                    ;;
+                all)
+                    DOCKER_GPU_ARGS=(--device nvidia.com/gpu=all)
+                    ;;
+                *)
+                    DOCKER_GPU_ARGS=(--device "nvidia.com/gpu=$selection")
+                    ;;
+            esac
             ;;
         legacy)
-            DOCKER_GPU_ARGS=(--runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all)
+            if [ "$GPU_SELECTION" != "none" ]; then
+                DOCKER_GPU_ARGS=(--runtime=nvidia -e "NVIDIA_VISIBLE_DEVICES=$GPU_SELECTION")
+            fi
             ;;
         none)
             ;;
@@ -252,6 +293,7 @@ Dataset root:     $DATASET_ROOT
 Dataset mode:     $([ "$DATASET_READONLY" = "0" ] && echo writable || echo readonly)
 Cache dir:        $CACHE_DIR
 GPU mode:         $GPU_MODE
+GPU selection:    $GPU_SELECTION
 Fix ownership:    $FIX_OWNERSHIP
 Chown paths:      $CHOWN_PATHS
 Host UID:GID:     ${HOST_UID}:${HOST_GID}

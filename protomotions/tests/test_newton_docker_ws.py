@@ -15,7 +15,7 @@ def _make_executable(path: Path, content: str) -> Path:
     return path
 
 
-def _base_env(tmp_path: Path) -> dict[str, str]:
+def _base_env(tmp_path: Path, *, gpus: str = "all") -> dict[str, str]:
     fake_bin = tmp_path / "bin"
     _make_executable(
         fake_bin / "docker",
@@ -41,6 +41,7 @@ def _base_env(tmp_path: Path) -> dict[str, str]:
             "PROTO_DATASET_ROOT": str(dataset_root),
             "PROTO_NEWTON_CACHE": str(cache_dir),
             "PROTO_FIX_OWNERSHIP": "0",
+            "PROTO_GPUS": gpus,
         }
     )
     return env
@@ -74,6 +75,40 @@ def test_newton_ws_launcher_mounts_repo_dataset_and_cache_for_shell(tmp_path):
     assert "--entrypoint" in args
     assert "/bin/bash" in args
     assert "protomotions-newton:cuda12.4-newton1.0.0" in args
+
+
+def test_newton_ws_launcher_can_select_specific_normal_docker_gpu(tmp_path):
+    env = _base_env(tmp_path, gpus="6")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "nvidia-smi"],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    args = _docker_args(result)
+
+    assert "--gpus" in args
+    assert "device=6" in args
+
+
+def test_newton_ws_launcher_quotes_normal_docker_multi_gpu_request(tmp_path):
+    env = _base_env(tmp_path, gpus="4,5,6,7")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "nvidia-smi"],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    args = _docker_args(result)
+
+    assert "--gpus" in args
+    assert '"device=4,5,6,7"' in args
 
 
 def test_newton_ws_launcher_smoke_runs_direct_python_import_checks(tmp_path):
