@@ -2,7 +2,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 The ProtoMotions Developers
 # SPDX-License-Identifier: Apache-2.0
 #
-# Convenience launcher for ProtoMotions Newton Docker on HPC.
+# Convenience launcher for ProtoMotions Newton Docker on HPC-1.
+#
+# HPC-1 uses rootless Docker without the normal NVIDIA runtime. GPU access is
+# wired explicitly through /dev/nvidia* devices plus the host NVIDIA libraries
+# staged under /data/$USER/nvidia-libs. Set PROTO_HPC_GPU_MODE=gpus on hosts
+# where docker run --gpus works.
 
 set -euo pipefail
 
@@ -15,8 +20,8 @@ HPC_USER="${PROTO_HPC_USER:-$(id -un)}"
 DATA_ROOT="${PROTO_HPC_DATA_ROOT:-/data/$HPC_USER}"
 CACHE_ROOT="${PROTO_NEWTON_CACHE:-$DATA_ROOT/newton_cache}"
 
-GPU_MODE="${PROTO_HPC_GPU_MODE:-${PROTO_GPU_MODE:-gpus}}"
-GPU_SELECTION="${PROTO_HPC_GPUS:-all}"
+GPU_MODE="${PROTO_HPC_GPU_MODE:-${PROTO_GPU_MODE:-manual}}"
+GPU_SELECTION="${PROTO_HPC_GPUS:-${PROTO_GPUS:-all}}"
 CUDA_VISIBLE_OVERRIDE="${PROTO_CUDA_VISIBLE_DEVICES:-}"
 
 NVIDIA_LIBS="${PROTO_HPC_NVIDIA_LIBS:-$DATA_ROOT/nvidia-libs}"
@@ -29,10 +34,10 @@ NETWORK_MODE="${PROTO_HPC_NETWORK_MODE:-host}"
 CONTAINER_NAME="${PROTO_CONTAINER_NAME:-}"
 DOCKER_RM="${PROTO_DOCKER_RM:-1}"
 
-DATASET_ROOT="${PROTO_DATASET_ROOT:-}"
+DATASET_ROOT="${PROTO_DATASET_ROOT:-/data/share/motion_datasets/protomotions}"
 DATASET_READONLY="${PROTO_DATASET_READONLY:-1}"
 
-FIX_OWNERSHIP="${PROTO_FIX_OWNERSHIP:-1}"
+FIX_OWNERSHIP="${PROTO_FIX_OWNERSHIP:-0}"
 CHOWN_PATHS="${PROTO_CHOWN_PATHS:-results output wandb}"
 HOST_UID="${PROTO_HOST_UID:-$(id -u)}"
 HOST_GID="${PROTO_HOST_GID:-$(id -g)}"
@@ -66,9 +71,10 @@ Environment overrides:
   PROTO_HPC_DATA_ROOT            Large host data root. Default: $DATA_ROOT
   PROTO_NEWTON_CACHE             Newton cache root. Default: $CACHE_ROOT
 
-  PROTO_HPC_GPU_MODE             gpus, cdi, legacy, manual, or none. Default: $GPU_MODE
+  PROTO_HPC_GPU_MODE             manual, gpus, cdi, legacy, or none. Default: $GPU_MODE
                                   manual wires /dev/nvidia* plus staged host libraries.
   PROTO_HPC_GPUS                 all, none, or comma-separated GPU IDs. Default: $GPU_SELECTION
+  PROTO_GPUS                     Compatibility alias for PROTO_HPC_GPUS.
   PROTO_CUDA_VISIBLE_DEVICES     Optional CUDA_VISIBLE_DEVICES inside container.
   PROTO_HPC_NVIDIA_LIBS          Manual-mode host NVIDIA library dir. Default: $NVIDIA_LIBS
   PROTO_HPC_NVIDIA_SMI           Manual-mode host nvidia-smi. Default: $NVIDIA_SMI
@@ -80,7 +86,7 @@ Environment overrides:
   PROTO_CONTAINER_NAME           Optional Docker container name for docker exec.
   PROTO_DOCKER_RM                1 to pass --rm, 0 to keep container. Default: $DOCKER_RM
 
-  PROTO_DATASET_ROOT             Optional dataset root mounted to the same absolute path.
+  PROTO_DATASET_ROOT             Dataset root mounted to the same absolute path. Default: $DATASET_ROOT
   PROTO_DATASET_READONLY         1 for read-only dataset mount, 0 for writable. Default: $DATASET_READONLY
 
   PROTO_FIX_OWNERSHIP            1 to chown artifact dirs after container exit. Default: $FIX_OWNERSHIP
@@ -101,7 +107,8 @@ Examples:
   $0 print-config
   $0 smoke
   PROTO_HPC_GPUS=6 $0 smoke
-  PROTO_HPC_GPU_MODE=manual PROTO_HPC_GPUS=0 $0 smoke
+  PROTO_HPC_GPUS=4,5,6,7 $0 shell
+  PROTO_HPC_GPU_MODE=gpus PROTO_HPC_GPUS=0 $0 smoke
   PROTO_HPC_GPUS=6 $0 train-astro-debug
   PROTO_HPC_GPUS=6 PROTO_CONTAINER_NAME=proto_newton_hpc PROTO_DOCKER_RM=0 $0 shell
   docker exec -it proto_newton_hpc /bin/bash
@@ -207,7 +214,12 @@ build_gpu_args() {
                     DOCKER_GPU_ARGS=(--gpus all)
                     ;;
                 *)
-                    DOCKER_GPU_ARGS=(--gpus "device=${GPU_SELECTION// /}")
+                    local selection="${GPU_SELECTION// /}"
+                    if [[ "$selection" == *,* ]]; then
+                        DOCKER_GPU_ARGS=(--gpus "\"device=$selection\"")
+                    else
+                        DOCKER_GPU_ARGS=(--gpus "device=$selection")
+                    fi
                     ;;
             esac
             ;;
@@ -257,8 +269,8 @@ build_gpu_args() {
 
     if [ -n "$CUDA_VISIBLE_OVERRIDE" ]; then
         DOCKER_GPU_ARGS+=(-e "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_OVERRIDE")
-    elif [ "$GPU_MODE" = "manual" ] && [ "$GPU_SELECTION" != "all" ] && [ "$GPU_SELECTION" != "none" ] && [ "${#GPU_IDS[@]}" -eq 1 ]; then
-        DOCKER_GPU_ARGS+=(-e CUDA_VISIBLE_DEVICES=0)
+    elif [ "$GPU_MODE" = "manual" ] && [ "$GPU_SELECTION" != "all" ] && [ "$GPU_SELECTION" != "none" ]; then
+        DOCKER_GPU_ARGS+=(-e "CUDA_VISIBLE_DEVICES=$(container_cuda_ordinals)")
     fi
 }
 
@@ -435,7 +447,7 @@ run_smoke() {
     run_bash_command '
 set -euxo pipefail
 nvidia-smi
-python -c '"'"'import sys, torch, newton, mujoco, mujoco_warp; print("python", sys.executable); print("torch", torch.__version__); print("cuda", torch.cuda.is_available()); print("gpu", torch.cuda.get_device_name(0) if torch.cuda.is_available() else None); print("newton", getattr(newton, "__version__", "unknown")); print("mujoco", mujoco.__version__); print("mujoco_warp", getattr(mujoco_warp, "__version__", "unknown"))'"'"'
+python -c '"'"'import os, sys, torch, newton, mujoco, mujoco_warp; print("python", sys.executable); print("torch", torch.__version__); print("cuda_visible", os.environ.get("CUDA_VISIBLE_DEVICES")); print("cuda", torch.cuda.is_available()); print("device_count", torch.cuda.device_count()); print("gpu", torch.cuda.get_device_name(0) if torch.cuda.is_available() else None); print("newton", getattr(newton, "__version__", "unknown")); print("mujoco", mujoco.__version__); print("mujoco_warp", getattr(mujoco_warp, "__version__", "unknown"))'"'"'
 '
 }
 
@@ -452,6 +464,33 @@ run_train_astro_debug() {
         "$@"
 }
 
+container_cuda_ordinals() {
+    local selected="${GPU_SELECTION// /}"
+    local ids=()
+    local visible=""
+    local index
+
+    IFS=',' read -r -a ids <<< "$selected"
+    for index in "${!ids[@]}"; do
+        if [ -n "$visible" ]; then
+            visible="$visible,$index"
+        else
+            visible="$index"
+        fi
+    done
+    echo "$visible"
+}
+
+resolved_cuda_visible() {
+    if [ -n "$CUDA_VISIBLE_OVERRIDE" ]; then
+        echo "$CUDA_VISIBLE_OVERRIDE"
+    elif [ "$GPU_MODE" = "manual" ] && [ "$GPU_SELECTION" != "all" ] && [ "$GPU_SELECTION" != "none" ]; then
+        container_cuda_ordinals
+    else
+        echo auto
+    fi
+}
+
 print_config() {
     cat <<EOF
 Repo:              $REPO
@@ -461,7 +500,7 @@ Data root:         $DATA_ROOT
 Cache root:        $CACHE_ROOT
 GPU mode:          $GPU_MODE
 GPU selection:     $GPU_SELECTION
-CUDA visible:      ${CUDA_VISIBLE_OVERRIDE:-auto}
+CUDA visible:      $(resolved_cuda_visible)
 NVIDIA libs:       $NVIDIA_LIBS
 nvidia-smi:        $NVIDIA_SMI
 Device dir:        $DEV_DIR
