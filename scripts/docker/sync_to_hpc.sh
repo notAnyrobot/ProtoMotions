@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-REMOTE_HOST="${REMOTE_HOST:-atom7@192.168.24.143}"
+REMOTE_HOST="${REMOTE_HOST:-atom7@192.168.24.9}"
 REMOTE_ROOT="${REMOTE_ROOT:-/data/atom7/Code/ProtoMotions}"
 RSYNC_BIN="${RSYNC_BIN:-rsync}"
 SSH_BIN="${SSH_BIN:-ssh}"
@@ -122,6 +122,11 @@ cmd_push() {
     --exclude='.codex/' \
     --exclude='.pytest_cache/' \
     --exclude='.venv*/' \
+    --exclude='results/' \
+    --exclude='output/' \
+    --exclude='outputs/' \
+    --exclude='wandb/' \
+    --exclude='exps/' \
     --exclude='*.tar' \
     --exclude='*.tar.*' \
     --exclude='*.sif' \
