@@ -6,6 +6,20 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "docker" / "launch_newton_docker_ws.sh"
+IMAGE = "protomotions-newton-pyroki:cuda12.4-newton1.0.0-pyroki59aa21f"
+REMOVED_COMMANDS = [
+    "nvidia-smi",
+    "smoke",
+    "python",
+    "run",
+    "bash",
+    "retarget-astro",
+    "print-config",
+    "pyroki-shell",
+    "pyroki-smoke",
+    "train-debug",
+    "train-astro-debug",
+]
 
 
 def _make_executable(path: Path, content: str) -> Path:
@@ -30,8 +44,8 @@ def _base_env(tmp_path: Path, *, gpus: str = "all") -> dict[str, str]:
         "done\n",
     )
 
-    dataset_root = tmp_path / "motion_lib"
-    dataset_root.mkdir()
+    dataset_root = tmp_path / "motion_datasets"
+    dataset_root.mkdir(parents=True)
     cache_dir = tmp_path / "cache"
 
     env = os.environ.copy()
@@ -47,15 +61,60 @@ def _base_env(tmp_path: Path, *, gpus: str = "all") -> dict[str, str]:
     return env
 
 
+def _add_pyroki_repo(env: dict[str, str], tmp_path: Path) -> Path:
+    pyroki_repo = tmp_path / "pyroki"
+    (pyroki_repo / "src" / "pyroki").mkdir(parents=True)
+    (pyroki_repo / "src" / "pyroki" / "__init__.py").write_text("")
+    env["PROTO_PYROKI_REPO"] = str(pyroki_repo)
+    return pyroki_repo
+
+
 def _docker_args(result: subprocess.CompletedProcess[str]) -> list[str]:
     return [line.removeprefix("<arg>") for line in result.stdout.splitlines()]
 
 
-def test_newton_ws_launcher_mounts_repo_dataset_and_cache_for_shell(tmp_path):
+def test_newton_ws_launcher_help_is_shell_only():
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "help"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    lines = result.stdout.splitlines()
+
+    assert "shell" in result.stdout
+    assert "help" in result.stdout
+    assert "scripts/docker/README.md" in result.stdout
+    assert f"Default image:       {IMAGE}" in lines
+    assert "Default dataset:     /media/android/data/motion_datasets" in lines
+
+    for command in REMOVED_COMMANDS:
+        assert command not in result.stdout
+
+
+def test_newton_ws_launcher_rejects_removed_commands(tmp_path):
     env = _base_env(tmp_path)
+    _add_pyroki_repo(env, tmp_path)
+
+    for command in REMOVED_COMMANDS:
+        result = subprocess.run(
+            ["bash", str(SCRIPT), command],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode != 0
+        assert f"Unknown command: {command}" in result.stderr
+
+
+def test_newton_ws_launcher_defaults_to_shell(tmp_path):
+    env = _base_env(tmp_path)
+    pyroki_repo = _add_pyroki_repo(env, tmp_path)
 
     result = subprocess.run(
-        ["bash", str(SCRIPT), "shell"],
+        ["bash", str(SCRIPT)],
         env=env,
         check=True,
         capture_output=True,
@@ -63,25 +122,30 @@ def test_newton_ws_launcher_mounts_repo_dataset_and_cache_for_shell(tmp_path):
     )
 
     args = _docker_args(result)
+    dataset_root = Path(env["PROTO_DATASET_ROOT"])
 
     assert "--gpus" in args
     assert "all" in args
     assert f"type=bind,src={REPO_ROOT},dst=/workspace/protomotions" in args
-    assert f"type=bind,src={tmp_path}/motion_lib,dst={tmp_path}/motion_lib,readonly" in args
+    assert f"type=bind,src={pyroki_repo},dst=/workspace/pyroki" in args
+    assert f"type=bind,src={dataset_root},dst={dataset_root},readonly" in args
     assert f"type=bind,src={tmp_path}/cache,dst=/root/.cache" in args
-    assert "PYTHONPATH=/workspace/protomotions:/workspace/protomotions/protomotions" in args
+    assert "PYTHONPATH=/workspace/pyroki/src:/workspace/protomotions:/workspace/protomotions/protomotions" in args
+    assert "JAX_PLATFORMS=cuda,cpu" in args
+    assert "XLA_PYTHON_CLIENT_PREALLOCATE=false" in args
     assert "-w" in args
     assert "/workspace/protomotions" in args
     assert "--entrypoint" in args
     assert "/bin/bash" in args
-    assert "protomotions-newton:cuda12.4-newton1.0.0" in args
+    assert IMAGE in args
 
 
 def test_newton_ws_launcher_can_select_specific_normal_docker_gpu(tmp_path):
     env = _base_env(tmp_path, gpus="6")
+    _add_pyroki_repo(env, tmp_path)
 
     result = subprocess.run(
-        ["bash", str(SCRIPT), "nvidia-smi"],
+        ["bash", str(SCRIPT), "shell"],
         env=env,
         check=True,
         capture_output=True,
@@ -96,9 +160,10 @@ def test_newton_ws_launcher_can_select_specific_normal_docker_gpu(tmp_path):
 
 def test_newton_ws_launcher_quotes_normal_docker_multi_gpu_request(tmp_path):
     env = _base_env(tmp_path, gpus="4,5,6,7")
+    _add_pyroki_repo(env, tmp_path)
 
     result = subprocess.run(
-        ["bash", str(SCRIPT), "nvidia-smi"],
+        ["bash", str(SCRIPT), "shell"],
         env=env,
         check=True,
         capture_output=True,
@@ -111,62 +176,9 @@ def test_newton_ws_launcher_quotes_normal_docker_multi_gpu_request(tmp_path):
     assert '"device=4,5,6,7"' in args
 
 
-def test_newton_ws_launcher_smoke_runs_direct_python_import_checks(tmp_path):
+def test_newton_ws_launcher_repairs_repo_artifact_ownership_through_container(tmp_path):
     env = _base_env(tmp_path)
-
-    result = subprocess.run(
-        ["bash", str(SCRIPT), "smoke"],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    args = _docker_args(result)
-    joined_args = "\n".join(args)
-
-    assert "--entrypoint" in args
-    assert "python" in args
-    assert "import sys, torch, newton, mujoco, mujoco_warp" in joined_args
-    assert "torch.cuda.is_available()" in joined_args
-
-
-def test_newton_ws_launcher_train_debug_uses_newton_training_defaults(tmp_path):
-    env = _base_env(tmp_path)
-
-    result = subprocess.run(
-        ["bash", str(SCRIPT), "train-debug", "--training-max-steps", "4096"],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    args = _docker_args(result)
-    joined_args = "\n".join(args)
-
-    assert "--entrypoint" in args
-    assert "python" in args
-    assert "-u" in args
-    assert "-m" in args
-    assert "protomotions.train_agent" in args
-    assert "--robot-name" in args
-    assert "g1" in args
-    assert "--simulator" in args
-    assert "newton" in args
-    assert "--motion-file" in args
-    assert "data/motion_for_trackers/g1_random_subset_tiny.pt" in args
-    assert "--experiment-path" in args
-    assert "examples/experiments/mimic/mlp.py" in args
-    assert "--experiment-name" in args
-    assert "newton-docker-debug" in args
-    assert "--training-max-steps" in args
-    assert "4096" in args
-    assert "protomotions-newton:cuda12.4-newton1.0.0" in joined_args
-
-
-def test_newton_ws_launcher_repairs_artifact_ownership_through_container(tmp_path):
-    env = _base_env(tmp_path)
+    _add_pyroki_repo(env, tmp_path)
     arg_log = tmp_path / "docker_args.log"
     env.update(
         {
@@ -191,5 +203,5 @@ def test_newton_ws_launcher_repairs_artifact_ownership_through_container(tmp_pat
     assert "--entrypoint" in logged_args
     assert "/bin/chown" in logged_args
     assert "-R" in logged_args
-    assert "1000:1000" in logged_args
+    assert f"{os.getuid()}:{os.getgid()}" in logged_args
     assert "/workspace/protomotions/protomotions/tests" in logged_args
