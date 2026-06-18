@@ -812,22 +812,24 @@ class NewtonSimulator(Simulator):
         if self.control_type == ControlType.BUILT_IN_PD:
             self._apply_control()
         elif self.control_type == ControlType.PROPORTIONAL:
-            pd_tar = self._action_to_pd_targets(self._common_actions)
+            pd_tar = self._common_actions
             if (
                 self._domain_randomization is not None
                 and "action_noise" in self._domain_randomization
             ):
+                pd_tar = pd_tar.clone()
                 pd_tar[
                     ..., self._domain_randomization["action_noise"]["dof_indices"]
                 ] += self._domain_randomization["action_noise"]["action_noise"]
             sim_targets = pd_tar[:, self.data_conversion.dof_convert_to_sim]
             self._update_pd_targets(sim_targets)
         elif self.control_type == ControlType.TORQUE:
-            torques = self._action_to_torque_targets(self._common_actions)
+            torques = self._common_actions
             if (
                 self._domain_randomization is not None
                 and "action_noise" in self._domain_randomization
             ):
+                torques = torques.clone()
                 torques[
                     ..., self._domain_randomization["action_noise"]["dof_indices"]
                 ] += self._domain_randomization["action_noise"]["action_noise"]
