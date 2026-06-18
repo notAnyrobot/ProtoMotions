@@ -30,6 +30,10 @@ from protomotions.components.pose_lib import (
     extract_qpos_from_transforms,
 )
 from protomotions.robot_configs.factory import robot_config
+from protomotions.utils.motion_interpolation_utils import (
+    interpolate_pos,
+    interpolate_quat,
+)
 from motion_filter import passes_exclude_motion_filter
 
 app = typer.Typer(pretty_exceptions_enable=False)
@@ -49,6 +53,119 @@ app = typer.Typer(pretty_exceptions_enable=False)
         - Columns 3-6: root rotation quaternion (w, x, y, z)
         - Columns 7+: joint angles in radians
 """
+
+
+def compute_resampled_frame_count(num_input_frames, input_fps, output_fps):
+    if num_input_frames < 1:
+        raise ValueError("Cannot resample an empty motion")
+    if input_fps <= 0:
+        raise ValueError(f"input_fps must be positive, got {input_fps}")
+    if output_fps <= 0:
+        raise ValueError(f"output_fps must be positive, got {output_fps}")
+
+    duration = (num_input_frames - 1) / input_fps
+    return int(round(duration * output_fps)) + 1
+
+
+def _resample_frame_indices(num_input_frames, input_fps, output_fps, device, dtype):
+    num_output_frames = compute_resampled_frame_count(
+        num_input_frames, input_fps, output_fps
+    )
+    source_frame = torch.linspace(
+        0.0,
+        float(num_input_frames - 1),
+        num_output_frames,
+        device=device,
+        dtype=dtype,
+    )
+    frame_idx0 = torch.floor(source_frame).long()
+    frame_idx1 = torch.clamp(frame_idx0 + 1, max=num_input_frames - 1)
+    blend = source_frame - frame_idx0.to(dtype=dtype)
+    return frame_idx0, frame_idx1, blend
+
+
+def _resample_linear_sequence(sequence, input_fps, output_fps):
+    frame_idx0, frame_idx1, blend = _resample_frame_indices(
+        sequence.shape[0],
+        input_fps,
+        output_fps,
+        sequence.device,
+        sequence.dtype,
+    )
+    return interpolate_pos(sequence[frame_idx0], sequence[frame_idx1], blend)
+
+
+def _unwrap_joint_angles(joint_angles):
+    if joint_angles.shape[0] <= 1:
+        return joint_angles.clone()
+
+    diffs = joint_angles[1:] - joint_angles[:-1]
+    two_pi = 2 * np.pi
+    wrapped_diffs = (diffs + np.pi) % two_pi - np.pi
+    wrapped_diffs = torch.where(
+        (wrapped_diffs == -np.pi) & (diffs > 0),
+        torch.full_like(wrapped_diffs, np.pi),
+        wrapped_diffs,
+    )
+    wrapped_diffs = torch.where(
+        torch.abs(diffs) <= np.pi,
+        diffs,
+        wrapped_diffs,
+    )
+
+    unwrapped = torch.empty_like(joint_angles)
+    unwrapped[0] = joint_angles[0]
+    unwrapped[1:] = joint_angles[0] + torch.cumsum(wrapped_diffs, dim=0)
+    return unwrapped
+
+
+def resample_motion_components(
+    root_pos,
+    root_rot_wxyz,
+    joint_angles,
+    input_fps,
+    output_fps,
+):
+    frame_idx0, frame_idx1, blend = _resample_frame_indices(
+        root_pos.shape[0],
+        input_fps,
+        output_fps,
+        root_pos.device,
+        root_pos.dtype,
+    )
+
+    root_pos = interpolate_pos(root_pos[frame_idx0], root_pos[frame_idx1], blend)
+
+    root_rot_wxyz = torch.nn.functional.normalize(root_rot_wxyz, dim=-1)
+    root_rot_wxyz = interpolate_quat(
+        root_rot_wxyz[frame_idx0], root_rot_wxyz[frame_idx1], blend
+    )
+    root_rot_wxyz = torch.nn.functional.normalize(root_rot_wxyz, dim=-1)
+
+    joint_angles = _resample_linear_sequence(
+        _unwrap_joint_angles(joint_angles),
+        input_fps,
+        output_fps,
+    )
+
+    return root_pos, root_rot_wxyz, joint_angles
+
+
+def resample_contact_probabilities(
+    foot_contacts,
+    input_fps,
+    output_fps,
+    device=None,
+    dtype=torch.float32,
+):
+    foot_contacts = torch.as_tensor(foot_contacts)
+    if device is not None or dtype is not None:
+        foot_contacts = foot_contacts.to(
+            device=device if device is not None else foot_contacts.device,
+            dtype=dtype if dtype is not None else foot_contacts.dtype,
+        )
+
+    return _resample_linear_sequence(foot_contacts, input_fps, output_fps)
 
 
 def process_csv_file(csv_path, input_fps, output_fps, device, dtype):
@@ -71,7 +188,7 @@ def process_csv_file(csv_path, input_fps, output_fps, device, dtype):
         tuple: (root_pos, root_rot_wxyz, joint_angles)
     """
     # Read headerless CSV file
-    data = np.loadtxt(csv_path, delimiter=",")
+    data = np.atleast_2d(np.loadtxt(csv_path, delimiter=","))
 
     # Extract root position (already in meters)
     root_pos = data[:, 0:3]
@@ -82,18 +199,14 @@ def process_csv_file(csv_path, input_fps, output_fps, device, dtype):
     # Extract joint angles (already in radians)
     joint_angles = data[:, 7:]
 
-    factor = input_fps // output_fps
-    if factor > 1:
-        joint_angles = joint_angles[::factor]
-        root_pos = root_pos[::factor]
-        root_rot_wxyz = root_rot_wxyz[::factor]
-
     # Convert to torch tensors
     root_pos = torch.from_numpy(root_pos).to(device, dtype)
     root_rot_wxyz = torch.from_numpy(root_rot_wxyz).to(device, dtype)
     joint_angles = torch.from_numpy(joint_angles).to(device, dtype)
 
-    return root_pos, root_rot_wxyz, joint_angles
+    return resample_motion_components(
+        root_pos, root_rot_wxyz, joint_angles, input_fps, output_fps
+    )
 
 
 def process_npz_file(npz_path, input_fps, output_fps, device, dtype):
@@ -110,18 +223,17 @@ def process_npz_file(npz_path, input_fps, output_fps, device, dtype):
     """
     data = np.load(npz_path, allow_pickle=True)
 
-    factor = input_fps // output_fps
-
-    # Extract and downsample the arrays (can't modify NpzFile in-place)
-    base_frame_pos = data["base_frame_pos"][::factor]
-    base_frame_wxyz = data["base_frame_wxyz"][::factor]
-    joint_angles = data["joint_angles"][::factor]
+    base_frame_pos = data["base_frame_pos"]
+    base_frame_wxyz = data["base_frame_wxyz"]
+    joint_angles = data["joint_angles"]
 
     root_pos = torch.from_numpy(base_frame_pos).to(device, dtype)
     root_rot_wxyz = torch.from_numpy(base_frame_wxyz).to(device, dtype)
     joint_angles = torch.from_numpy(joint_angles).to(device, dtype)
 
-    return root_pos, root_rot_wxyz, joint_angles
+    return resample_motion_components(
+        root_pos, root_rot_wxyz, joint_angles, input_fps, output_fps
+    )
 
 
 def apply_contact_labels_to_motion(
@@ -130,6 +242,7 @@ def apply_contact_labels_to_motion(
     motion_filename,
     input_fps,
     output_fps,
+    ignore_first_n_frames,
     left_foot_idx,
     right_foot_idx,
     device,
@@ -143,6 +256,7 @@ def apply_contact_labels_to_motion(
         motion_filename: Name of the motion file (for matching)
         input_fps: Input fps of contact labels
         output_fps: Target output fps
+        ignore_first_n_frames: Number of output frames already trimmed from motion
         left_foot_idx: Index of left foot body
         right_foot_idx: Index of right foot body
         device: torch device
@@ -165,9 +279,11 @@ def apply_contact_labels_to_motion(
     contact_data = np.load(contact_labels_path, allow_pickle=True)
     foot_contacts = contact_data["foot_contacts"]  # [K, 2] - left, right
 
-    factor = input_fps // output_fps
-    if factor > 1:
-        foot_contacts = foot_contacts[::factor]
+    foot_contacts = resample_contact_probabilities(
+        foot_contacts, input_fps, output_fps, device=device
+    )
+    if ignore_first_n_frames > 0:
+        foot_contacts = foot_contacts[ignore_first_n_frames:]
 
     # Check length matches
     motion_length = motion.rigid_body_pos.shape[0]
@@ -179,13 +295,15 @@ def apply_contact_labels_to_motion(
 
     # Create rigid_body_contacts tensor
     num_bodies = motion.rigid_body_pos.shape[1]
-    rigid_body_contacts = np.zeros((motion_length, num_bodies), dtype=bool)
+    rigid_body_contacts = torch.zeros(
+        motion_length, num_bodies, device=device, dtype=torch.bool
+    )
 
     # Set left and right foot contacts (threshold at 0.5)
     rigid_body_contacts[:, left_foot_idx] = foot_contacts[:, 0] > 0.5  # Left foot
     rigid_body_contacts[:, right_foot_idx] = foot_contacts[:, 1] > 0.5  # Right foot
 
-    motion.rigid_body_contacts = torch.from_numpy(rigid_body_contacts).to(device)
+    motion.rigid_body_contacts = rigid_body_contacts
     print(
         f"Applied contact labels from original motion before re-targeting {contact_labels_path}"
     )
@@ -267,11 +385,6 @@ def main(
     print(f"Robot type: {robot_type}")
     print(f"Left foot: {left_foot_name} (index {left_foot_idx})")
     print(f"Right foot: {right_foot_name} (index {right_foot_idx})")
-
-    if input_fps % output_fps != 0:
-        raise ValueError(
-            f"input_fps ({input_fps}) must be divisible by output_fps ({output_fps})"
-        )
 
     # Find both NPZ and CSV files
     npz_files = sorted(list(glob.glob(str(retargeted_motion_dir / "*.npz"))))
@@ -372,6 +485,7 @@ def main(
                     motion_filename=motion_file.name,
                     input_fps=input_fps,
                     output_fps=output_fps,
+                    ignore_first_n_frames=ignore_first_n_frames,
                     left_foot_idx=left_foot_idx,
                     right_foot_idx=right_foot_idx,
                     device=device,
