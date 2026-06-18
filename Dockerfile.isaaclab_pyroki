@@ -1,0 +1,83 @@
+FROM protomotions-isaaclab:2.3.0
+
+# Prevent interactive prompts during package installation.
+ENV DEBIAN_FRONTEND=noninteractive
+
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG APT_MIRROR=
+ARG PIP_TIMEOUT=600
+ARG PIP_RETRIES=30
+ARG JAXLS_COMMIT=5f766d3b09364a96d83497de2325a835d0e23dc4
+ARG CUDNN_VERSION=9.8.0.87
+
+ENV PYROKI_VENV=/workspace/pyroki-venv
+ENV PYROKI_PYTHON=/workspace/pyroki-venv/bin/python
+ENV PYTHONPATH=/workspace/pyroki/src:/workspace/protomotions:/workspace/protomotions/protomotions
+ENV JAX_PLATFORMS=cuda,cpu
+ENV XLA_PYTHON_CLIENT_PREALLOCATE=false
+ENV PYROKI_CUDNN_LIB=/workspace/pyroki-venv/lib/python3.12/site-packages/nvidia/cudnn/lib
+ENV LD_LIBRARY_PATH=/workspace/pyroki-venv/lib/python3.12/site-packages/nvidia/cudnn/lib
+
+# Keep PyRoki/JAX out of IsaacLab's bundled Python. Policy learning still uses
+# /workspace/isaaclab/isaaclab.sh -p, while retargeting uses $PYROKI_PYTHON.
+RUN if [ -n "$APT_MIRROR" ]; then \
+        find /etc/apt -type f \( -name "sources.list" -o -name "*.sources" \) -print0 \
+            | xargs -0 -r sed -i \
+                -e "s|http://archive.ubuntu.com/ubuntu|${APT_MIRROR}|g" \
+                -e "s|http://security.ubuntu.com/ubuntu|${APT_MIRROR}|g"; \
+    fi \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && apt-get update \
+    && apt-get install -y \
+        build-essential \
+        python3 \
+        python3-dev \
+        python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN uv venv --python python3 --seed --index-url "${PIP_INDEX_URL}" "$PYROKI_VENV"
+
+RUN "$PYROKI_PYTHON" -m pip --version
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    "$PYROKI_PYTHON" -m pip install \
+    --timeout "${PIP_TIMEOUT}" \
+    --retries "${PIP_RETRIES}" \
+    --prefer-binary \
+    --index-url "${PIP_INDEX_URL}" \
+    "jax[cuda12]==0.6.2" \
+    "nvidia-cudnn-cu12==${CUDNN_VERSION}" \
+    "jax_dataclasses==1.6.3" \
+    "jaxlie==1.5.0" \
+    "jaxtyping==0.3.7" \
+    "loguru==0.7.3" \
+    "pyliblzfse==0.4.1" \
+    "robot_descriptions==1.23.0" \
+    "scipy==1.15.2" \
+    "trimesh==4.11.5" \
+    "tyro==1.0.11" \
+    "viser==1.0.24" \
+    "yourdfpy==0.0.60"
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    "$PYROKI_PYTHON" -m pip install \
+    --timeout "${PIP_TIMEOUT}" \
+    --retries "${PIP_RETRIES}" \
+    --prefer-binary \
+    --index-url "${PIP_INDEX_URL}" \
+    "hatchling==1.30.1" \
+    "tomli==2.2.1"
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    "$PYROKI_PYTHON" -m pip install \
+    --timeout "${PIP_TIMEOUT}" \
+    --retries "${PIP_RETRIES}" \
+    --prefer-binary \
+    --index-url "${PIP_INDEX_URL}" \
+    --no-build-isolation \
+    "jaxls @ https://github.com/brentyi/jaxls/archive/${JAXLS_COMMIT}.tar.gz"
+
+WORKDIR /workspace/protomotions
+
+CMD ["/bin/bash"]

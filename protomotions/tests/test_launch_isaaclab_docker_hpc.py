@@ -6,7 +6,22 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "docker" / "launch_isaaclab_docker_hpc.sh"
-HPC_DATASET_ROOT = "/data/share/motion_datasets/protomotions"
+HPC_DATASET_ROOT = "/data/share/motion_datasets"
+IMAGE = "protomotions-isaaclab-pyroki:2.3.0-pyroki59aa21f"
+REMOVED_COMMANDS = [
+    "nvidia-smi",
+    "smoke",
+    "python",
+    "run",
+    "bash",
+    "retarget-astro",
+    "print-config",
+    "pyroki-shell",
+    "pyroki-smoke",
+    "train-debug",
+    "train-astro-debug",
+    "reset",
+]
 
 
 def _touch(path: Path) -> Path:
@@ -29,11 +44,16 @@ def _base_env(
     _make_executable(
         fake_bin / "docker",
         "#!/usr/bin/env bash\n"
+        "if [ -n \"${DOCKER_ARG_LOG:-}\" ]; then\n"
+        "  for arg in \"$@\"; do\n"
+        "    printf '<arg>%s\\n' \"$arg\" >> \"$DOCKER_ARG_LOG\"\n"
+        "  done\n"
+        "fi\n"
         "for arg in \"$@\"; do\n"
         "  printf '<arg>%s\\n' \"$arg\"\n"
         "done\n",
     )
-    dataset_root = tmp_path / "motion_datasets" / "protomotions"
+    dataset_root = tmp_path / "motion_datasets"
     dataset_root.mkdir(parents=True)
 
     env = os.environ.copy()
@@ -49,6 +69,14 @@ def _base_env(
     if gpu_mode is not None:
         env["PROTO_HPC_GPU_MODE"] = gpu_mode
     return env
+
+
+def _add_pyroki_repo(env: dict[str, str], tmp_path: Path) -> Path:
+    pyroki_repo = tmp_path / "pyroki"
+    (pyroki_repo / "src" / "pyroki").mkdir(parents=True)
+    (pyroki_repo / "src" / "pyroki" / "__init__.py").write_text("")
+    env["PROTO_PYROKI_REPO"] = str(pyroki_repo)
+    return pyroki_repo
 
 
 def _manual_gpu_env(
@@ -92,48 +120,60 @@ def _docker_args(result: subprocess.CompletedProcess[str]) -> list[str]:
     return [line.removeprefix("<arg>") for line in result.stdout.splitlines()]
 
 
-def test_isaaclab_hpc_launcher_defaults_to_hpc_dataset_root(tmp_path):
-    env = os.environ.copy()
-    env.pop("PROTO_DATASET_ROOT", None)
-    env["PROTO_ISAACLAB_CACHE"] = str(tmp_path / "isaac_cache")
-
+def test_isaaclab_hpc_launcher_help_is_shell_only():
     result = subprocess.run(
-        ["bash", str(SCRIPT), "print-config"],
-        env=env,
+        ["bash", str(SCRIPT), "help"],
         check=True,
         capture_output=True,
         text=True,
     )
 
-    assert f"Dataset root:      {HPC_DATASET_ROOT}" in result.stdout
+    lines = result.stdout.splitlines()
+
+    assert "shell" in result.stdout
+    assert "help" in result.stdout
+    assert "scripts/docker/README.md" in result.stdout
+    assert f"Default image:       {IMAGE}" in lines
+    assert f"Default dataset:     {HPC_DATASET_ROOT}" in lines
+    assert "Default GPU mode:    manual" in lines
+    assert "Default GPU choice:  all" in lines
+
+    for command in REMOVED_COMMANDS:
+        assert command not in result.stdout
 
 
-def test_isaaclab_hpc_launcher_disables_ownership_fix_by_default(tmp_path):
-    env = os.environ.copy()
-    env.pop("PROTO_FIX_OWNERSHIP", None)
-    env["PROTO_ISAACLAB_CACHE"] = str(tmp_path / "isaac_cache")
+def test_isaaclab_hpc_launcher_rejects_removed_commands(tmp_path):
+    env = _base_env(tmp_path)
+    _add_pyroki_repo(env, tmp_path)
+
+    for command in REMOVED_COMMANDS:
+        result = subprocess.run(
+            ["bash", str(SCRIPT), command],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode != 0
+        assert f"Unknown command: {command}" in result.stderr
+
+
+def test_isaaclab_hpc_launcher_defaults_to_manual_gpu_passthrough_for_shell(
+    tmp_path,
+):
+    env = _manual_gpu_env(tmp_path, gpu_mode=None)
+    pyroki_repo = _add_pyroki_repo(env, tmp_path)
 
     result = subprocess.run(
-        ["bash", str(SCRIPT), "print-config"],
+        ["bash", str(SCRIPT), "shell"],
         env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert "Fix ownership:     0" in result.stdout
-
-
-def test_isaaclab_hpc_launcher_defaults_to_manual_gpu_passthrough(tmp_path):
-    result = subprocess.run(
-        ["bash", str(SCRIPT), "nvidia-smi"],
-        env=_manual_gpu_env(tmp_path, gpu_mode=None),
         check=True,
         capture_output=True,
         text=True,
     )
 
     args = _docker_args(result)
+    dataset_root = tmp_path / "motion_datasets"
 
     assert "--gpus" not in args
     assert "--runtime=nvidia" not in args
@@ -141,38 +181,33 @@ def test_isaaclab_hpc_launcher_defaults_to_manual_gpu_passthrough(tmp_path):
     assert f"--device={tmp_path}/dev/nvidiactl" in args
     assert f"{tmp_path}/nvidia-libs:/host-nvidia-libs:ro" in args
     assert f"{tmp_path}/nvidia-smi:/usr/bin/nvidia-smi:ro" in args
-
-
-def test_isaaclab_hpc_launcher_mounts_repo_dataset_and_cache_for_shell(tmp_path):
-    result = subprocess.run(
-        ["bash", str(SCRIPT), "shell"],
-        env=_base_env(tmp_path),
-        check=True,
-        capture_output=True,
-        text=True,
+    assert (
+        "LD_LIBRARY_PATH=/workspace/pyroki-venv/lib/python3.12/site-packages/"
+        "nvidia/cudnn/lib:/host-nvidia-libs" in args
     )
-
-    args = _docker_args(result)
-    dataset_root = tmp_path / "motion_datasets" / "protomotions"
-
-    assert "--gpus" in args
-    assert "all" in args
+    assert "CUDA_VISIBLE_DEVICES=0" in args
     assert f"type=bind,src={REPO_ROOT},dst=/workspace/protomotions" in args
+    assert f"type=bind,src={pyroki_repo},dst=/workspace/pyroki" in args
     assert f"type=bind,src={dataset_root},dst={dataset_root},readonly" in args
     assert f"{tmp_path}/isaac_cache/kit:/root/.cache/ov/Kit" in args
-    assert f"{tmp_path}/isaac_cache/ov:/root/.cache/ov" in args
     assert f"{tmp_path}/isaac_cache/pip:/root/.cache/pip" in args
-    assert "OMNI_KIT_ACCEPT_EULA=YES" in args
-    assert "ACCEPT_EULA=Y" in args
-    assert "PRIVACY_CONSENT=N" in args
-    assert "OMNI_KIT_ALLOW_ROOT=1" in args
-    assert "protomotions-isaaclab:2.3.0" in args
+    assert "PYTHONPATH=/workspace/pyroki/src:/workspace/protomotions:/workspace/protomotions/protomotions" in args
+    assert "PYROKI_PYTHON=/workspace/pyroki-venv/bin/python" in args
+    assert not any(arg.startswith("PYROKI_JAX_CUDA_LIB=") for arg in args)
+    assert "JAX_PLATFORMS=cuda,cpu" in args
+    assert "XLA_PYTHON_CLIENT_PREALLOCATE=false" in args
+    assert "--entrypoint" in args
+    assert "/bin/bash" in args
+    assert IMAGE in args
 
 
-def test_isaaclab_hpc_launcher_can_select_specific_normal_docker_gpu(tmp_path):
+def test_isaaclab_hpc_launcher_uses_normal_docker_gpus_when_requested(tmp_path):
+    env = _base_env(tmp_path, gpu_mode="gpus", gpus="6")
+    _add_pyroki_repo(env, tmp_path)
+
     result = subprocess.run(
-        ["bash", str(SCRIPT), "nvidia-smi"],
-        env=_base_env(tmp_path, gpus="6"),
+        ["bash", str(SCRIPT), "shell"],
+        env=env,
         check=True,
         capture_output=True,
         text=True,
@@ -184,25 +219,13 @@ def test_isaaclab_hpc_launcher_can_select_specific_normal_docker_gpu(tmp_path):
     assert "device=6" in args
 
 
-def test_isaaclab_hpc_launcher_quotes_normal_docker_multi_gpu_request(tmp_path):
-    result = subprocess.run(
-        ["bash", str(SCRIPT), "nvidia-smi"],
-        env=_base_env(tmp_path, gpus="0,1,2,3"),
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    args = _docker_args(result)
-
-    assert "--gpus" in args
-    assert '"device=0,1,2,3"' in args
-
-
 def test_isaaclab_hpc_launcher_supports_manual_multi_gpu_subset(tmp_path):
+    env = _manual_gpu_env(tmp_path, gpus="4,5,6,7")
+    _add_pyroki_repo(env, tmp_path)
+
     result = subprocess.run(
-        ["bash", str(SCRIPT), "smoke"],
-        env=_manual_gpu_env(tmp_path, gpus="4,5,6,7"),
+        ["bash", str(SCRIPT), "shell"],
+        env=env,
         check=True,
         capture_output=True,
         text=True,
@@ -221,11 +244,12 @@ def test_isaaclab_hpc_launcher_supports_manual_multi_gpu_subset(tmp_path):
 
 def test_isaaclab_hpc_launcher_accepts_proto_gpus_alias_for_manual_subset(tmp_path):
     env = _manual_gpu_env(tmp_path, gpus="all")
+    _add_pyroki_repo(env, tmp_path)
     env.pop("PROTO_HPC_GPUS")
     env["PROTO_GPUS"] = "5,6,7"
 
     result = subprocess.run(
-        ["bash", str(SCRIPT), "smoke"],
+        ["bash", str(SCRIPT), "shell"],
         env=env,
         check=True,
         capture_output=True,
@@ -240,8 +264,11 @@ def test_isaaclab_hpc_launcher_accepts_proto_gpus_alias_for_manual_subset(tmp_pa
     assert "CUDA_VISIBLE_DEVICES=0,1,2" in args
 
 
-def test_isaaclab_hpc_launcher_supports_named_kept_container_for_exec_workflow(tmp_path):
+def test_isaaclab_hpc_launcher_supports_named_kept_container_for_exec_workflow(
+    tmp_path,
+):
     env = _manual_gpu_env(tmp_path, gpus="1")
+    _add_pyroki_repo(env, tmp_path)
     env.update(
         {
             "PROTO_CONTAINER_NAME": "proto_hpc",
@@ -266,24 +293,3 @@ def test_isaaclab_hpc_launcher_supports_named_kept_container_for_exec_workflow(t
     assert "proto_hpc" in args
     assert "--network=host" in args
     assert "--ipc=host" in args
-
-
-def test_isaaclab_hpc_launcher_has_reset_probe_for_isaaclab_physx_runtime(tmp_path):
-    env = _manual_gpu_env(tmp_path, gpus="0")
-    env["PROTO_RESET_TIMEOUT"] = "123"
-
-    result = subprocess.run(
-        ["bash", str(SCRIPT), "reset"],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    args = _docker_args(result)
-    joined_args = "\n".join(args)
-
-    assert "/workspace/isaaclab/isaaclab.sh" in joined_args
-    assert "timeout 123" in joined_args
-    assert "SimulationContext" in joined_args
-    assert "RESET_OK" in joined_args
