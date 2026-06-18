@@ -18,19 +18,73 @@
 # Arguments:
 #   proto_python:  Path to Python interpreter or env dir with ProtoMotions installed
 #   pyroki_python: Path to Python interpreter or env dir with PyRoki installed
-#   amass_pt_file: Path to packaged AMASS MotionLib .pt file (outputs saved in same directory)
+#   amass_pt_file: Path to packaged AMASS MotionLib .pt file under smpl/<split>/
 #   robot_type:    Target robot: 'g1', 'h1_2', or 'astro'
 #   skip_freq:     (Optional) Skip every N motions for subset processing (default: 1 = all motions)
+#   PROTO_PYROKI_REPO: Optional PyRoki checkout root (default: sibling ../pyroki)
+#   PROTO_RETARGET_ROOT: Optional retarget data root (default: inferred from smpl/<split>/)
+#   PROTO_RETARGET_SPLIT: Optional split name override (default: inferred from path/filename)
 
 set -e  # Exit on error
 
 SUPPORTED_ROBOT_TYPES_DISPLAY="'g1', 'h1_2', or 'astro'"
+SUPPORTED_SPLITS_DISPLAY="'train', 'test', or 'validation'"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DEFAULT_PYROKI_REPO="$(cd "${REPO_ROOT}/.." && pwd)/pyroki"
+PYROKI_REPO="${PROTO_PYROKI_REPO:-$DEFAULT_PYROKI_REPO}"
 
 is_supported_robot_type() {
     case "$1" in
         g1|h1_2|astro) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+is_supported_split_name() {
+    case "$1" in
+        train|test|validation) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+infer_split_name() {
+    local file_path="$1"
+    local parent_name
+    local file_stem
+
+    parent_name="$(basename "$(dirname "$file_path")")"
+    if is_supported_split_name "$parent_name"; then
+        echo "$parent_name"
+        return 0
+    fi
+
+    file_stem="$(basename "$file_path" .pt)"
+    case "$file_stem" in
+        amass_smpl_train|train) echo "train" ;;
+        amass_smpl_test|test) echo "test" ;;
+        amass_smpl_validation|validation) echo "validation" ;;
+        *) return 1 ;;
+    esac
+}
+
+infer_retarget_root() {
+    local file_path="$1"
+    local file_dir
+    local parent_dir
+    local parent_name
+
+    file_dir="$(dirname "$file_path")"
+    parent_dir="$(dirname "$file_dir")"
+    parent_name="$(basename "$parent_dir")"
+
+    if [ "$(basename "$file_dir")" = "smpl" ]; then
+        dirname "$file_dir"
+    elif is_supported_split_name "$(basename "$file_dir")" && [ "$parent_name" = "smpl" ]; then
+        dirname "$parent_dir"
+    else
+        dirname "$file_dir"
+    fi
 }
 
 resolve_python_path() {
@@ -50,6 +104,18 @@ resolve_python_path() {
     echo "$python_path"
 }
 
+validate_pyroki_repo() {
+    if [ ! -d "${PYROKI_REPO}/src/pyroki" ]; then
+        echo "Error: PyRoki repo not found or invalid: $PYROKI_REPO"
+        echo "Set PROTO_PYROKI_REPO to a checkout containing src/pyroki."
+        exit 1
+    fi
+}
+
+run_pyroki_python() {
+    PYTHONPATH="${PYROKI_REPO}/src" "$PYROKI_PYTHON" "$@"
+}
+
 # Parse arguments
 if [ $# -lt 4 ]; then
     echo "Usage: $0 <proto_python_or_env> <pyroki_python_or_env> <amass_pt_file> <robot_type> [skip_freq]"
@@ -57,12 +123,17 @@ if [ $# -lt 4 ]; then
     echo "Arguments:"
     echo "  proto_python   Path to Python interpreter or env dir with ProtoMotions installed"
     echo "  pyroki_python  Path to Python interpreter or env dir with PyRoki installed"
-    echo "  amass_pt_file  Path to packaged AMASS MotionLib .pt file (outputs saved in same dir)"
+    echo "  amass_pt_file  Path to packaged AMASS MotionLib .pt file under smpl/<split>/"
     echo "  robot_type     Target robot: $SUPPORTED_ROBOT_TYPES_DISPLAY"
     echo "  skip_freq      (Optional) Skip every N motions (default: 1 = all motions)"
+    echo "  PROTO_PYROKI_REPO Optional PyRoki checkout root"
+    echo "                 Default: $DEFAULT_PYROKI_REPO"
+    echo "  PROTO_RETARGET_ROOT Optional retarget data root"
+    echo "                 Default: inferred from smpl/<split>/"
+    echo "  PROTO_RETARGET_SPLIT Optional split override: $SUPPORTED_SPLITS_DISPLAY"
     echo ""
     echo "Example:"
-    echo "  $0 ~/miniconda3/envs/protomotions/bin/python ~/miniconda3/envs/pyroki/bin/python /data/amass.pt g1 15"
+    echo "  $0 ~/miniconda3/envs/protomotions/bin/python ~/miniconda3/envs/pyroki/bin/python /data/protomotions/smpl/train/amass_smpl_train.pt g1 1"
     exit 1
 fi
 
@@ -88,21 +159,34 @@ if [ ! -f "$AMASS_PT_FILE" ]; then
     exit 1
 fi
 
-# Output directories are in the same location as input (follows rigv1-vaulting convention)
-OUTPUT_DIR="$(dirname "$AMASS_PT_FILE")"
-KEYPOINTS_DIR="${OUTPUT_DIR}/keypoints-for-retarget"
-RETARGETED_DIR="${OUTPUT_DIR}/pyroki-retargeted-${ROBOT_TYPE}"
-CONTACTS_DIR="${OUTPUT_DIR}/contacts"
-PROTO_DIR="${OUTPUT_DIR}/proto-${ROBOT_TYPE}"
-FINAL_PT="${OUTPUT_DIR}/proto-${ROBOT_TYPE}.pt"
+SPLIT_NAME="${PROTO_RETARGET_SPLIT:-$(infer_split_name "$AMASS_PT_FILE" || true)}"
+
+if ! is_supported_split_name "$SPLIT_NAME"; then
+    echo "Error: Could not infer AMASS split for: $AMASS_PT_FILE"
+    echo "Place the file under smpl/<split>/ or set PROTO_RETARGET_SPLIT to $SUPPORTED_SPLITS_DISPLAY."
+    exit 1
+fi
+
+DATA_ROOT="${PROTO_RETARGET_ROOT:-$(infer_retarget_root "$AMASS_PT_FILE")}"
+SMPL_SPLIT_DIR="${DATA_ROOT}/smpl/${SPLIT_NAME}"
+ROBOT_SPLIT_DIR="${DATA_ROOT}/${ROBOT_TYPE}/${SPLIT_NAME}"
+KEYPOINTS_DIR="${SMPL_SPLIT_DIR}/keypoints-for-retarget"
+RETARGETED_DIR="${ROBOT_SPLIT_DIR}/pyroki-retargeted-${ROBOT_TYPE}"
+CONTACTS_DIR="${SMPL_SPLIT_DIR}/contacts"
+PROTO_DIR="${ROBOT_SPLIT_DIR}/proto-${ROBOT_TYPE}"
+FINAL_PT="${ROBOT_SPLIT_DIR}/proto-${ROBOT_TYPE}.pt"
 
 echo "=============================================="
 echo "Retargeting AMASS to ${ROBOT_TYPE^^}"
 echo "=============================================="
 echo "ProtoMotions Python: $PROTO_PYTHON"
 echo "PyRoki Python:       $PYROKI_PYTHON"
+echo "PyRoki repo:         $PYROKI_REPO"
 echo "Input:               $AMASS_PT_FILE"
-echo "Output dir:          $OUTPUT_DIR"
+echo "Retarget root:       $DATA_ROOT"
+echo "Split:               $SPLIT_NAME"
+echo "SMPL split dir:      $SMPL_SPLIT_DIR"
+echo "Robot split dir:     $ROBOT_SPLIT_DIR"
 echo "Skip freq:           $SKIP_FREQ (1 = all motions)"
 echo "=============================================="
 
@@ -119,7 +203,8 @@ echo "[Step 1/5] Extracting keypoints from SMPL motions..."
 # Step 2: Run PyRoki retargeting (uses PyRoki)
 echo ""
 echo "[Step 2/5] Running PyRoki retargeting to ${ROBOT_TYPE^^}..."
-"$PYROKI_PYTHON" pyroki/batch_retarget_from_keypoints.py \
+validate_pyroki_repo
+run_pyroki_python pyroki/batch_retarget_from_keypoints.py \
     --robot-type "$ROBOT_TYPE" \
     --subsample-factor 1 \
     --keypoints-folder-path "$KEYPOINTS_DIR" \
@@ -131,7 +216,7 @@ echo "[Step 2/5] Running PyRoki retargeting to ${ROBOT_TYPE^^}..."
 # Step 3: Extract contact labels from source motions (uses PyRoki)
 echo ""
 echo "[Step 3/5] Extracting foot contact labels from source SMPL motions..."
-"$PYROKI_PYTHON" pyroki/batch_retarget_from_keypoints.py \
+run_pyroki_python pyroki/batch_retarget_from_keypoints.py \
     --robot-type "$ROBOT_TYPE" \
     --subsample-factor 1 \
     --keypoints-folder-path "$KEYPOINTS_DIR" \

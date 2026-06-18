@@ -101,8 +101,8 @@ Python interpreters:
 
 * ``proto_python``: Path to Python interpreter with ProtoMotions installed
 * ``pyroki_python``: Path to Python interpreter with PyRoki installed
-* ``amass_pt_file``: Path to packaged AMASS MotionLib .pt file (outputs saved in same directory)
-* ``robot_type``: Target robot (``g1`` or ``h1_2``)
+* ``amass_pt_file``: Path to packaged AMASS MotionLib .pt file under ``smpl/<split>/``
+* ``robot_type``: Target robot (``g1``, ``h1_2``, or ``astro``)
 * ``skip_freq``: (Optional) Skip every N motions (default: 1 = all motions)
 
 **Example:**
@@ -113,28 +113,33 @@ Python interpreters:
    ./scripts/retarget_amass_to_robot.sh \
        ~/miniconda3/envs/protomotions/bin/python \
        ~/miniconda3/envs/pyroki/bin/python \
-       /path/to/amass_train.pt \
+       /data/protomotions/smpl/train/amass_smpl_train.pt \
        g1 50
-   
-   # Retarget all motions to H1_2
+
+   # Retarget all motions to Astro
    ./scripts/retarget_amass_to_robot.sh \
        ~/miniconda3/envs/protomotions/bin/python \
        ~/miniconda3/envs/pyroki/bin/python \
-       /path/to/amass_train.pt \
-       h1_2 1
+       /data/protomotions/smpl/train/amass_smpl_train.pt \
+       astro 1
 
 The script runs all steps automatically and outputs the final MotionLib ``.pt`` file.
 
-**Output folder structure** (outputs saved alongside input .pt file):
+**Output folder structure** (SMPL-derived keypoints and contacts are shared across robots; robot outputs are saved per robot and split):
 
 .. code-block:: text
 
-   output_dir/
-   ├── keypoints-for-retarget/   # Keypoints extracted from SMPL
-   ├── pyroki-retargeted-g1/     # Retargeted robot motions
-   ├── contacts/                 # Foot contact labels from source
-   ├── proto-g1/                 # Robot proto format motions
-   └── proto-g1.pt               # Packaged robot MotionLib
+   /data/protomotions/
+   ├── smpl/
+   │   └── train/
+   │       ├── amass_smpl_train.pt
+   │       ├── keypoints-for-retarget/   # Keypoints extracted from SMPL
+   │       └── contacts/                 # Foot contact labels from source
+   └── astro/
+       └── train/
+           ├── pyroki-retargeted-astro/  # Retargeted robot motions
+           ├── proto-astro/              # Robot proto format motions
+           └── proto-astro.pt            # Packaged robot MotionLib
 
 Retargeting a Single Motion File
 --------------------------------
