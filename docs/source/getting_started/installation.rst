@@ -133,9 +133,11 @@ For full installation details, see the `Newton Installation Guide <https://newto
    .. code-block:: bash
 
       pip install torch --index-url https://download.pytorch.org/whl/cu124
-      pip install "newton[examples]"
+      pip install -c /path/to/protomotions/requirements_newton.txt "newton[examples]==1.0.0"
 
-   Use ``newton[sim]`` instead of ``newton[examples]`` if you only need headless mode (no viewer).
+   Use ``newton[sim]==1.0.0`` instead of ``newton[examples]==1.0.0`` if you only need headless mode (no viewer).
+   Keep ``requirements_newton.txt`` as a constraint during the Newton install so the Newton extras resolve to the
+   MuJoCo and ``mujoco-warp`` versions tested by ProtoMotions.
 
 3. Install ProtoMotions and dependencies:
 
@@ -231,4 +233,3 @@ Next Steps
 ----------
 
 After installation, proceed to the :doc:`quickstart` guide to train your first agent or run pre-trained models.
-

@@ -1,5 +1,6 @@
 # Newton simulator: tested against Newton 1.0.0 (PyPI)
-# Install newton before these requirements: pip install "newton[sim]==1.0.0"
+# Install Newton before these requirements, using this file as a constraint:
+# pip install -c requirements_newton.txt "newton[sim]==1.0.0"
 mujoco==3.5.0
 mujoco-warp==3.5.0.2
 wheel
