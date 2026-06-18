@@ -3,10 +3,13 @@
 .vscode
 *__pycache__*
 *.egg-info
+outputs
 outputs/*
+output
 output/*
 rendered_images/*
 *tmp*
+results
 results/*
 exps/*
 .DS_Store
