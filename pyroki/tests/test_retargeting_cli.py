@@ -68,6 +68,18 @@ def test_parser_defaults_robot_type_to_g1(tmp_path):
     assert args.robot_type == "g1"
 
 
+def test_parser_defaults_target_raw_frames_to_motion_length(tmp_path):
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "--keypoints-folder-path",
+            str(tmp_path / "keypoints"),
+        ]
+    )
+
+    assert args.target_raw_frames is None
+
+
 def test_main_builds_config_and_options(monkeypatch, tmp_path):
     captured = {}
 
@@ -104,7 +116,7 @@ def test_main_builds_config_and_options(monkeypatch, tmp_path):
         keypoints_folder_path=tmp_path / "keypoints",
         output_dir=tmp_path / "out",
         subsample_factor=1,
-        target_raw_frames=450,
+        target_raw_frames=None,
         skip_existing=False,
         source_type="smpl",
         save_contacts_only=False,

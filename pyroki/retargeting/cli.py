@@ -15,7 +15,7 @@ class BatchRetargetingOptions:
     keypoints_folder_path: Path
     output_dir: Path
     subsample_factor: int
-    target_raw_frames: int
+    target_raw_frames: int | None
     skip_existing: bool
     source_type: str
     save_contacts_only: bool
@@ -51,7 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--urdf-path")
     parser.add_argument("--mesh-dir")
     parser.add_argument("--subsample-factor", type=int, default=1)
-    parser.add_argument("--target-raw-frames", type=int, default=450)
+    parser.add_argument(
+        "--target-raw-frames",
+        type=int,
+        default=None,
+        help="Raw source frames to optimize. Defaults to each motion's full length.",
+    )
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--source-type", default="smpl")
     parser.add_argument("--save-contacts-only", action="store_true")

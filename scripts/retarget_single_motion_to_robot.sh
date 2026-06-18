@@ -5,26 +5,34 @@
 # Convenience script to retarget a single SMPL .motion file to a robot.
 #
 # IMPORTANT: ProtoMotions and PyRoki require separate Python environments.
-# You must provide paths to both Python interpreters or environment directories.
+# Defaults target this checkout's IsaacLab venv and the local PyRoki conda env.
+# You can still provide paths to both Python interpreters or environment directories.
 #
-# Usage: ./scripts/retarget_single_motion_to_robot.sh <proto_python_or_env> <pyroki_python_or_env> <motion_file> <output_dir> <robot_type>
+# Usage:
+#   ./scripts/retarget_single_motion_to_robot.sh <motion_file> <output_dir> <robot_type>
+#   ./scripts/retarget_single_motion_to_robot.sh <proto_python_or_env> <pyroki_python_or_env> <motion_file> <output_dir> <robot_type>
 #
 # Example:
 #   ./scripts/retarget_single_motion_to_robot.sh \
-#       ~/miniconda3/envs/protomotions/bin/python \
-#       ~/miniconda3/envs/pyroki/bin/python \
 #       /path/to/motion.motion /path/to/output g1
 #
 # Arguments:
-#   proto_python:  Path to Python interpreter or env dir with ProtoMotions installed
-#   pyroki_python: Path to Python interpreter or env dir with PyRoki installed
 #   motion_file:   Path to input .motion file (SMPL format)
 #   output_dir:    Directory where all intermediate and final outputs will be saved
 #   robot_type:    Target robot: 'g1', 'h1_2', or 'astro'
+#   proto_python:  Optional path to Python interpreter or env dir with ProtoMotions installed
+#   pyroki_python: Optional path to Python interpreter or env dir with PyRoki installed
+#   PROTO_PYROKI_REPO: Optional PyRoki checkout root (default: sibling ../pyroki)
 
 set -e  # Exit on error
 
 SUPPORTED_ROBOT_TYPES_DISPLAY="'g1', 'h1_2', or 'astro'"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DEFAULT_PROTO_PYTHON="${REPO_ROOT}/.venv_isaaclab/bin/python"
+DEFAULT_PYROKI_PYTHON="${HOME}/miniforge3/envs/pyroki-cuda/bin/python"
+DEFAULT_PYROKI_REPO="$(cd "${REPO_ROOT}/.." && pwd)/pyroki"
+PYROKI_REPO="${PROTO_PYROKI_REPO:-$DEFAULT_PYROKI_REPO}"
 
 is_supported_robot_type() {
     case "$1" in
@@ -50,27 +58,51 @@ resolve_python_path() {
     echo "$python_path"
 }
 
+validate_pyroki_repo() {
+    if [ ! -d "${PYROKI_REPO}/src/pyroki" ]; then
+        echo "Error: PyRoki repo not found or invalid: $PYROKI_REPO"
+        echo "Set PROTO_PYROKI_REPO to a checkout containing src/pyroki."
+        exit 1
+    fi
+}
+
+run_pyroki_python() {
+    PYTHONPATH="${PYROKI_REPO}/src" "$PYROKI_PYTHON" "$@"
+}
+
 # Parse arguments
-if [ $# -lt 5 ]; then
-    echo "Usage: $0 <proto_python_or_env> <pyroki_python_or_env> <motion_file> <output_dir> <robot_type>"
+if [ $# -eq 3 ]; then
+    PROTO_PYTHON="$DEFAULT_PROTO_PYTHON"
+    PYROKI_PYTHON="$DEFAULT_PYROKI_PYTHON"
+    MOTION_FILE="$1"
+    OUTPUT_DIR="$2"
+    ROBOT_TYPE="$3"
+elif [ $# -eq 5 ]; then
+    PROTO_PYTHON="$1"
+    PYROKI_PYTHON="$2"
+    MOTION_FILE="$3"
+    OUTPUT_DIR="$4"
+    ROBOT_TYPE="$5"
+else
+    echo "Usage:"
+    echo "  $0 <motion_file> <output_dir> <robot_type>"
+    echo "  $0 <proto_python_or_env> <pyroki_python_or_env> <motion_file> <output_dir> <robot_type>"
     echo ""
     echo "Arguments:"
-    echo "  proto_python   Path to Python interpreter or env dir with ProtoMotions installed"
-    echo "  pyroki_python  Path to Python interpreter or env dir with PyRoki installed"
     echo "  motion_file    Path to input .motion file (SMPL format)"
     echo "  output_dir     Directory where all outputs will be saved"
     echo "  robot_type     Target robot: $SUPPORTED_ROBOT_TYPES_DISPLAY"
+    echo "  proto_python   Optional path to Python interpreter or env dir with ProtoMotions installed"
+    echo "                 Default: $DEFAULT_PROTO_PYTHON"
+    echo "  pyroki_python  Optional path to Python interpreter or env dir with PyRoki installed"
+    echo "                 Default: $DEFAULT_PYROKI_PYTHON"
+    echo "  PROTO_PYROKI_REPO Optional PyRoki checkout root"
+    echo "                 Default: $DEFAULT_PYROKI_REPO"
     echo ""
     echo "Example:"
-    echo "  $0 ~/miniconda3/envs/protomotions/bin/python ~/miniconda3/envs/pyroki/bin/python /data/walk.motion /data/retargeted g1"
+    echo "  $0 /data/walk.motion /data/retargeted g1"
     exit 1
 fi
-
-PROTO_PYTHON="$1"
-PYROKI_PYTHON="$2"
-MOTION_FILE="$3"
-OUTPUT_DIR="$4"
-ROBOT_TYPE="$5"
 
 # Validate robot type
 if ! is_supported_robot_type "$ROBOT_TYPE"; then
@@ -109,6 +141,7 @@ echo "Retargeting Single Motion to ${ROBOT_TYPE^^}"
 echo "=============================================="
 echo "ProtoMotions Python: $PROTO_PYTHON"
 echo "PyRoki Python:       $PYROKI_PYTHON"
+echo "PyRoki repo:         $PYROKI_REPO"
 echo "Input:               $MOTION_FILE"
 echo "Output dir:          $OUTPUT_DIR"
 echo "=============================================="
@@ -125,7 +158,8 @@ echo "[Step 1/5] Extracting keypoints from SMPL motion..."
 # Step 2: Run PyRoki retargeting (uses PyRoki)
 echo ""
 echo "[Step 2/5] Running PyRoki retargeting to ${ROBOT_TYPE^^}..."
-"$PYROKI_PYTHON" pyroki/batch_retarget_from_keypoints.py \
+validate_pyroki_repo
+run_pyroki_python pyroki/batch_retarget_from_keypoints.py \
     --robot-type "$ROBOT_TYPE" \
     --subsample-factor 1 \
     --keypoints-folder-path "$KEYPOINTS_DIR" \
@@ -136,7 +170,7 @@ echo "[Step 2/5] Running PyRoki retargeting to ${ROBOT_TYPE^^}..."
 # Step 3: Extract contact labels from source motion (uses PyRoki)
 echo ""
 echo "[Step 3/5] Extracting foot contact labels from source SMPL motion..."
-"$PYROKI_PYTHON" pyroki/batch_retarget_from_keypoints.py \
+run_pyroki_python pyroki/batch_retarget_from_keypoints.py \
     --robot-type "$ROBOT_TYPE" \
     --subsample-factor 1 \
     --keypoints-folder-path "$KEYPOINTS_DIR" \

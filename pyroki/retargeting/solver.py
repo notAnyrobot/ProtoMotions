@@ -112,17 +112,19 @@ def load_motion_data(
     config: PyrokiRetargetConfig,
     source_type: str,
     subsample_factor: int,
-    target_raw_frames: int,
+    target_raw_frames: int | None,
 ) -> MotionData:
     print(f"Loading motion from: {motion_path}")
     motion_data = onp.load(motion_path, allow_pickle=True).item()
-    target_subsampled_frames = len(list(range(0, target_raw_frames, subsample_factor)))
 
     raw_positions = motion_data["positions"]
     raw_orientations = motion_data["orientations"]
     raw_left_foot_contacts = motion_data["left_foot_contacts"]
     raw_right_foot_contacts = motion_data["right_foot_contacts"]
     original_raw_frames = raw_positions.shape[0]
+    if target_raw_frames is None:
+        target_raw_frames = original_raw_frames
+    target_subsampled_frames = len(list(range(0, target_raw_frames, subsample_factor)))
 
     print(f"Original motion length: {original_raw_frames} frames.")
     assert original_raw_frames > 0

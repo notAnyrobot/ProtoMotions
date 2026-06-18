@@ -27,13 +27,17 @@ def _write_keypoints(path: Path, frames: int = 3) -> None:
     positions[:, 0, :] = np.array([1.0, 2.0, 3.0], dtype=np.float32)
     positions[:, 1, :] = np.array([2.0, 2.0, 3.0], dtype=np.float32)
     positions[:, 9, :] = np.array([1.0, 4.0, 3.0], dtype=np.float32)
+    left_foot_contacts = np.zeros((frames, 2), dtype=bool)
+    right_foot_contacts = np.zeros((frames, 2), dtype=bool)
+    left_foot_contacts[0] = True
+    right_foot_contacts[1:] = True
     np.save(
         path,
         {
             "positions": positions,
             "orientations": orientations,
-            "left_foot_contacts": np.array([[1, 1], [0, 0], [0, 0]], dtype=bool),
-            "right_foot_contacts": np.array([[0, 0], [1, 1], [1, 1]], dtype=bool),
+            "left_foot_contacts": left_foot_contacts,
+            "right_foot_contacts": right_foot_contacts,
         },
     )
 
@@ -77,6 +81,26 @@ def test_load_motion_data_applies_g1_smpl_scaling_and_padding(tmp_path):
         data.keypoints[0, 0, 1]
         + (4.0 - 2.0) * config.source_scales["smpl"].upper_body[1],
     )
+
+
+def test_load_motion_data_defaults_target_raw_frames_to_full_motion(tmp_path):
+    motion_path = tmp_path / "walk.npy"
+    _write_keypoints(motion_path, frames=5)
+    config = get_retarget_config("g1")
+
+    data = load_motion_data(
+        motion_path=motion_path,
+        config=config,
+        source_type="smpl",
+        subsample_factor=2,
+        target_raw_frames=None,
+    )
+
+    assert data.keypoints.shape == (3, 18, 3)
+    assert data.orientations.shape == (3, 18, 3, 3)
+    assert data.left_foot_contact.shape == (3, 1)
+    assert data.right_foot_contact.shape == (3, 1)
+    assert data.num_timesteps == 3
 
 
 def test_load_motion_data_repeats_last_frame_when_padding(tmp_path):
