@@ -91,6 +91,26 @@ def test_parser_defaults_target_raw_frames_to_motion_length(tmp_path):
     assert args.target_raw_frames is None
 
 
+def test_batch_options_default_chunk_fields_for_direct_callers(tmp_path):
+    options = BatchRetargetingOptions(
+        keypoints_folder_path=tmp_path / "keypoints",
+        output_dir=tmp_path / "out",
+        subsample_factor=1,
+        target_raw_frames=None,
+        skip_existing=False,
+        source_type="smpl",
+        save_contacts_only=False,
+        contacts_dir=None,
+        input_fps=30.0,
+        visualize=False,
+    )
+
+    assert options.chunk_long_motions is False
+    assert options.chunk_threshold_frames == 900
+    assert options.chunk_size_frames == 450
+    assert options.chunk_overlap_frames == 60
+
+
 def test_main_builds_config_and_options(monkeypatch, tmp_path):
     captured = {}
 
@@ -164,7 +184,28 @@ def test_main_uses_g1_config_when_robot_type_is_omitted(monkeypatch, tmp_path):
     assert captured["options"].keypoints_folder_path == tmp_path / "keypoints"
 
 
-def test_main_rejects_invalid_chunk_options(tmp_path):
+@pytest.mark.parametrize(
+    ("chunk_args", "expected_message"),
+    [
+        (
+            ["--chunk-size-frames", "0"],
+            "--chunk-size-frames must be positive",
+        ),
+        (
+            ["--chunk-overlap-frames", "-1"],
+            "--chunk-overlap-frames must be non-negative",
+        ),
+        (
+            ["--chunk-size-frames", "450", "--chunk-overlap-frames", "450"],
+            "--chunk-overlap-frames must be smaller than --chunk-size-frames",
+        ),
+        (
+            ["--chunk-threshold-frames", "449", "--chunk-size-frames", "450"],
+            "--chunk-threshold-frames must be at least --chunk-size-frames",
+        ),
+    ],
+)
+def test_main_rejects_invalid_chunk_options(tmp_path, chunk_args, expected_message):
     result = subprocess.run(
         [
             sys.executable,
@@ -172,20 +213,14 @@ def test_main_rejects_invalid_chunk_options(tmp_path):
             "--keypoints-folder-path",
             str(tmp_path / "keypoints"),
             "--chunk-long-motions",
-            "--chunk-size-frames",
-            "450",
-            "--chunk-overlap-frames",
-            "450",
+            *chunk_args,
         ],
         text=True,
         capture_output=True,
     )
 
     assert result.returncode != 0
-    assert (
-        "--chunk-overlap-frames must be smaller than --chunk-size-frames"
-        in result.stderr
-    )
+    assert expected_message in result.stderr
 
 
 def test_canonical_script_help_works_without_pyroki_runtime_import():

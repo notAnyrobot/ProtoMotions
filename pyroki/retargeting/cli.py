@@ -22,10 +22,10 @@ class BatchRetargetingOptions:
     contacts_dir: Path | None
     input_fps: float
     visualize: bool
-    chunk_long_motions: bool
-    chunk_threshold_frames: int
-    chunk_size_frames: int
-    chunk_overlap_frames: int
+    chunk_long_motions: bool = False
+    chunk_threshold_frames: int = 900
+    chunk_size_frames: int = 450
+    chunk_overlap_frames: int = 60
 
 
 def run_batch_retargeting(
