@@ -253,7 +253,7 @@ def _unwrap_joint_angles(joint_angles: onp.ndarray) -> onp.ndarray:
 
 
 def _blend_alpha(overlap_len: int, dtype: onp.dtype) -> onp.ndarray:
-    return onp.arange(overlap_len, dtype=dtype)[:, None] / overlap_len
+    return onp.linspace(0.0, 1.0, overlap_len, dtype=dtype)[:, None]
 
 
 def stitch_retargeted_chunks(

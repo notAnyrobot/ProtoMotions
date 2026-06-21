@@ -321,11 +321,11 @@ def test_stitch_retargeted_chunks_preserves_length_and_blends_overlap():
     assert stitched.joint_angles.shape == (8, 1)
     np.testing.assert_allclose(
         stitched.base_frame_pos[:, 0],
-        [0.0, 1.0, 2.0, 3.0, 22.0, 50.0, 60.0, 70.0],
+        [0.0, 1.0, 2.0, 3.0, 40.0, 50.0, 60.0, 70.0],
     )
     np.testing.assert_allclose(
         stitched.joint_angles[:, 0],
-        [0.0, 1.0, 2.0, 3.0, 22.0, 50.0, 60.0, 70.0],
+        [0.0, 1.0, 2.0, 3.0, 40.0, 50.0, 60.0, 70.0],
     )
     np.testing.assert_allclose(
         stitched.base_frame_wxyz,
