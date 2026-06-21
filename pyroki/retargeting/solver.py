@@ -225,13 +225,23 @@ def stitch_retargeted_chunks(
 
     filled_until = 0
     for chunk_index, (window, motion) in enumerate(chunks):
-        if window.length != motion.base_frame_pos.shape[0]:
-            raise ValueError(
-                f"chunk {chunk_index} has window length {window.length} but "
-                f"{motion.base_frame_pos.shape[0]} retargeted frames"
-            )
         if window.start < 0 or window.end > total_frames or window.start >= window.end:
             raise ValueError(f"invalid chunk window: {window}")
+        frame_counts = (
+            motion.base_frame_pos.shape[0],
+            motion.base_frame_wxyz.shape[0],
+            motion.joint_angles.shape[0],
+        )
+        if any(frame_count != window.length for frame_count in frame_counts):
+            raise ValueError(
+                f"chunk {chunk_index} has inconsistent frame counts: "
+                f"window length {window.length}, "
+                f"base_frame_pos {frame_counts[0]}, "
+                f"base_frame_wxyz {frame_counts[1]}, "
+                f"joint_angles {frame_counts[2]}"
+            )
+        if window.start > filled_until:
+            raise ValueError("chunk windows must cover frames contiguously")
 
         current_wxyz = _normalize_wxyz(motion.base_frame_wxyz)
         current_joints = _unwrap_joint_angles(motion.joint_angles)

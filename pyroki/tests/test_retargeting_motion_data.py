@@ -355,3 +355,42 @@ def test_stitch_retargeted_chunks_unwraps_joint_angles_before_blending():
 
     assert stitched.joint_angles[2, 0] > 6.0
     assert stitched.joint_angles[3, 0] > 6.0
+
+
+def test_stitch_retargeted_chunks_rejects_gap_between_windows():
+    first = _retargeted_motion(
+        positions=np.zeros((2, 3), dtype=np.float32),
+        quaternions=np.tile(np.array([[1.0, 0.0, 0.0, 0.0]]), (2, 1)),
+        joints=np.zeros((2, 1), dtype=np.float32),
+    )
+    second = _retargeted_motion(
+        positions=np.zeros((2, 3), dtype=np.float32),
+        quaternions=np.tile(np.array([[1.0, 0.0, 0.0, 0.0]]), (2, 1)),
+        joints=np.zeros((2, 1), dtype=np.float32),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="chunk windows must cover frames contiguously",
+    ):
+        stitch_retargeted_chunks(
+            chunks=[
+                (RetargetWindow(start=0, end=2), first),
+                (RetargetWindow(start=3, end=5), second),
+            ],
+            total_frames=5,
+        )
+
+
+def test_stitch_retargeted_chunks_rejects_inconsistent_frame_counts():
+    motion = RetargetedMotion(
+        base_frame_pos=np.zeros((2, 3), dtype=np.float32),
+        base_frame_wxyz=np.tile(np.array([[1.0, 0.0, 0.0, 0.0]]), (1, 1)),
+        joint_angles=np.zeros((3, 1), dtype=np.float32),
+    )
+
+    with pytest.raises(ValueError, match="chunk 0 has inconsistent frame counts"):
+        stitch_retargeted_chunks(
+            chunks=[(RetargetWindow(start=0, end=2), motion)],
+            total_frames=2,
+        )
