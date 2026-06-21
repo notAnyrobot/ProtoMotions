@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import pytest
 
 PYROKI_SCRIPT_DIR = Path(__file__).resolve().parents[1]
 if str(PYROKI_SCRIPT_DIR) not in sys.path:
@@ -11,6 +12,22 @@ if str(PYROKI_SCRIPT_DIR) not in sys.path:
 from retargeting.cli import BatchRetargetingOptions
 from retargeting.factory import get_retarget_config
 import retargeting.solver as solver
+
+
+def _patch_load_robot(monkeypatch) -> None:
+    monkeypatch.setattr(
+        solver,
+        "_load_robot",
+        lambda config: (
+            None,
+            object(),
+            None,
+            (),
+            (),
+            np.array([], dtype=np.int32),
+            np.zeros((0, 0)),
+        ),
+    )
 
 
 def _write_keypoints(path: Path, frames: int) -> None:
@@ -64,19 +81,7 @@ def test_non_visual_batch_keeps_short_motion_on_full_solve(monkeypatch, tmp_path
     _write_keypoints(keypoints_dir / "short.npy", frames=6)
     calls = []
 
-    monkeypatch.setattr(
-        solver,
-        "_load_robot",
-        lambda config: (
-            None,
-            object(),
-            None,
-            (),
-            (),
-            np.array([], dtype=np.int32),
-            np.zeros((0, 0)),
-        ),
-    )
+    _patch_load_robot(monkeypatch)
 
     def fake_solve_motion_data_retargeting(**kwargs):
         motion_data = kwargs["motion_data"]
@@ -115,23 +120,17 @@ def test_non_visual_batch_chunks_long_motion_and_writes_one_output(monkeypatch, 
     _write_keypoints(keypoints_dir / "long.npy", frames=10)
     calls = []
 
-    monkeypatch.setattr(
-        solver,
-        "_load_robot",
-        lambda config: (
-            None,
-            object(),
-            None,
-            (),
-            (),
-            np.array([], dtype=np.int32),
-            np.zeros((0, 0)),
-        ),
-    )
+    _patch_load_robot(monkeypatch)
 
     def fake_solve_motion_data_retargeting(**kwargs):
         motion_data = kwargs["motion_data"]
-        calls.append(motion_data.num_timesteps)
+        calls.append(
+            (
+                motion_data.num_timesteps,
+                kwargs["subsample_factor"],
+                kwargs["input_fps"],
+            )
+        )
         return solver.RetargetedMotion(
             base_frame_pos=motion_data.keypoints[:, 0, :],
             base_frame_wxyz=np.tile(
@@ -153,12 +152,107 @@ def test_non_visual_batch_chunks_long_motion_and_writes_one_output(monkeypatch, 
         [keypoints_dir / "long.npy"],
     )
 
-    assert calls == [4, 4, 4, 4]
+    assert calls == [(4, 1, 60.0), (4, 1, 60.0), (4, 1, 60.0), (4, 1, 60.0)]
     saved = np.load(output_dir / "long_retargeted.npz")
     assert set(saved.files) == {"base_frame_pos", "base_frame_wxyz", "joint_angles"}
     assert saved["base_frame_pos"].shape == (10, 3)
     assert saved["joint_angles"].shape == (10, 1)
     np.testing.assert_allclose(saved["base_frame_pos"][:, 0], np.arange(10) * 0.9)
+
+
+def test_non_visual_batch_wraps_chunk_solve_failure_with_frame_range(
+    monkeypatch,
+    tmp_path,
+):
+    keypoints_dir = tmp_path / "keypoints"
+    output_dir = tmp_path / "out"
+    keypoints_dir.mkdir()
+    _write_keypoints(keypoints_dir / "long.npy", frames=10)
+    calls = []
+
+    _patch_load_robot(monkeypatch)
+
+    def fake_solve_motion_data_retargeting(**kwargs):
+        motion_data = kwargs["motion_data"]
+        calls.append(motion_data.num_timesteps)
+        if len(calls) == 2:
+            raise ValueError("synthetic chunk failure")
+        return solver.RetargetedMotion(
+            base_frame_pos=motion_data.keypoints[:, 0, :],
+            base_frame_wxyz=np.tile(
+                np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+                (motion_data.num_timesteps, 1),
+            ),
+            joint_angles=motion_data.keypoints[:, 0, 0:1],
+        )
+
+    monkeypatch.setattr(
+        solver,
+        "solve_motion_data_retargeting",
+        fake_solve_motion_data_retargeting,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        solver.run_non_visualized_batch(
+            get_retarget_config("g1"),
+            _options(keypoints_dir, output_dir, chunk_long_motions=True),
+            [keypoints_dir / "long.npy"],
+        )
+
+    message = str(exc_info.value)
+    assert "Failed retargeting chunk 2/4" in message
+    assert "frame range [2, 6)" in message
+
+
+def test_non_visual_batch_wraps_malformed_chunk_output_with_frame_range(
+    monkeypatch,
+    tmp_path,
+):
+    keypoints_dir = tmp_path / "keypoints"
+    output_dir = tmp_path / "out"
+    keypoints_dir.mkdir()
+    _write_keypoints(keypoints_dir / "long.npy", frames=10)
+    calls = []
+
+    _patch_load_robot(monkeypatch)
+
+    def fake_solve_motion_data_retargeting(**kwargs):
+        motion_data = kwargs["motion_data"]
+        calls.append(motion_data.num_timesteps)
+        if len(calls) == 2:
+            return solver.RetargetedMotion(
+                base_frame_pos=motion_data.keypoints[:3, 0, :],
+                base_frame_wxyz=np.tile(
+                    np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+                    (motion_data.num_timesteps, 1),
+                ),
+                joint_angles=motion_data.keypoints[:, 0, 0:1],
+            )
+        return solver.RetargetedMotion(
+            base_frame_pos=motion_data.keypoints[:, 0, :],
+            base_frame_wxyz=np.tile(
+                np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+                (motion_data.num_timesteps, 1),
+            ),
+            joint_angles=motion_data.keypoints[:, 0, 0:1],
+        )
+
+    monkeypatch.setattr(
+        solver,
+        "solve_motion_data_retargeting",
+        fake_solve_motion_data_retargeting,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        solver.run_non_visualized_batch(
+            get_retarget_config("g1"),
+            _options(keypoints_dir, output_dir, chunk_long_motions=True),
+            [keypoints_dir / "long.npy"],
+        )
+
+    message = str(exc_info.value)
+    assert "Failed retargeting chunk 2/4" in message
+    assert "frame range [2, 6)" in message
 
 
 def test_non_visual_batch_skip_existing_still_skips_final_output(monkeypatch, tmp_path):
@@ -175,19 +269,7 @@ def test_non_visual_batch_skip_existing_still_skips_final_output(monkeypatch, tm
     )
     calls = []
 
-    monkeypatch.setattr(
-        solver,
-        "_load_robot",
-        lambda config: (
-            None,
-            object(),
-            None,
-            (),
-            (),
-            np.array([], dtype=np.int32),
-            np.zeros((0, 0)),
-        ),
-    )
+    _patch_load_robot(monkeypatch)
     monkeypatch.setattr(
         solver,
         "solve_motion_data_retargeting",

@@ -901,6 +901,7 @@ def solve_motion_data_with_optional_chunking(
         f"overlap={options.chunk_overlap_frames}"
     )
     chunks = []
+    expected_joint_dim = None
     for chunk_index, window in enumerate(windows):
         print(
             f"Retargeting chunk {chunk_index + 1}/{len(windows)}: "
@@ -919,6 +920,14 @@ def solve_motion_data_with_optional_chunking(
                 subsample_factor=options.subsample_factor,
                 input_fps=options.input_fps,
             )
+            joint_dim = _validate_retargeted_motion(
+                window,
+                chunk_motion,
+                chunk_index=chunk_index,
+                expected_joint_dim=expected_joint_dim,
+            )
+            if expected_joint_dim is None:
+                expected_joint_dim = joint_dim
         except Exception as exc:
             raise RuntimeError(
                 f"Failed retargeting chunk {chunk_index + 1}/{len(windows)} "
