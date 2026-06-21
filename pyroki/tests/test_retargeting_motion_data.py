@@ -12,6 +12,7 @@ if str(PYROKI_SCRIPT_DIR) not in sys.path:
 from retargeting.config import AlignmentPair
 from retargeting.factory import get_retarget_config
 from retargeting.solver import (
+    RetargetedMotion,
     RetargetWindow,
     build_retarget_mask,
     discover_keypoint_paths,
@@ -20,6 +21,7 @@ from retargeting.solver import (
     load_motion_data,
     retargeted_output_path,
     save_contact_labels,
+    stitch_retargeted_chunks,
     validate_chunk_parameters,
 )
 
@@ -43,6 +45,18 @@ def _write_keypoints(path: Path, frames: int = 3) -> None:
             "left_foot_contacts": left_foot_contacts,
             "right_foot_contacts": right_foot_contacts,
         },
+    )
+
+
+def _retargeted_motion(
+    positions: np.ndarray,
+    quaternions: np.ndarray,
+    joints: np.ndarray,
+) -> RetargetedMotion:
+    return RetargetedMotion(
+        base_frame_pos=positions.astype(np.float32),
+        base_frame_wxyz=quaternions.astype(np.float32),
+        joint_angles=joints.astype(np.float32),
     )
 
 
@@ -264,3 +278,80 @@ def test_generate_retarget_windows_rejects_empty_motion():
             chunk_size_frames=450,
             chunk_overlap_frames=60,
         )
+
+
+def test_stitch_retargeted_chunks_preserves_length_and_blends_overlap():
+    first = _retargeted_motion(
+        positions=np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [4.0, 0.0, 0.0],
+            ]
+        ),
+        quaternions=np.tile(np.array([[1.0, 0.0, 0.0, 0.0]]), (5, 1)),
+        joints=np.array([[0.0], [1.0], [2.0], [3.0], [4.0]]),
+    )
+    second = _retargeted_motion(
+        positions=np.array(
+            [
+                [30.0, 0.0, 0.0],
+                [40.0, 0.0, 0.0],
+                [50.0, 0.0, 0.0],
+                [60.0, 0.0, 0.0],
+                [70.0, 0.0, 0.0],
+            ]
+        ),
+        quaternions=np.tile(np.array([[-1.0, 0.0, 0.0, 0.0]]), (5, 1)),
+        joints=np.array([[30.0], [40.0], [50.0], [60.0], [70.0]]),
+    )
+
+    stitched = stitch_retargeted_chunks(
+        chunks=[
+            (RetargetWindow(start=0, end=5), first),
+            (RetargetWindow(start=3, end=8), second),
+        ],
+        total_frames=8,
+    )
+
+    assert stitched.base_frame_pos.shape == (8, 3)
+    assert stitched.base_frame_wxyz.shape == (8, 4)
+    assert stitched.joint_angles.shape == (8, 1)
+    np.testing.assert_allclose(
+        stitched.base_frame_pos[:, 0],
+        [0.0, 1.0, 2.0, 3.0, 22.0, 50.0, 60.0, 70.0],
+    )
+    np.testing.assert_allclose(
+        stitched.joint_angles[:, 0],
+        [0.0, 1.0, 2.0, 3.0, 22.0, 50.0, 60.0, 70.0],
+    )
+    np.testing.assert_allclose(
+        stitched.base_frame_wxyz,
+        np.tile(np.array([[1.0, 0.0, 0.0, 0.0]]), (8, 1)),
+    )
+
+
+def test_stitch_retargeted_chunks_unwraps_joint_angles_before_blending():
+    first = _retargeted_motion(
+        positions=np.zeros((3, 3), dtype=np.float32),
+        quaternions=np.tile(np.array([[1.0, 0.0, 0.0, 0.0]]), (3, 1)),
+        joints=np.array([[5.9], [6.1], [6.2]], dtype=np.float32),
+    )
+    second = _retargeted_motion(
+        positions=np.zeros((3, 3), dtype=np.float32),
+        quaternions=np.tile(np.array([[1.0, 0.0, 0.0, 0.0]]), (3, 1)),
+        joints=np.array([[-0.05], [0.05], [0.15]], dtype=np.float32),
+    )
+
+    stitched = stitch_retargeted_chunks(
+        chunks=[
+            (RetargetWindow(start=0, end=3), first),
+            (RetargetWindow(start=2, end=5), second),
+        ],
+        total_frames=5,
+    )
+
+    assert stitched.joint_angles[2, 0] > 6.0
+    assert stitched.joint_angles[3, 0] > 6.0

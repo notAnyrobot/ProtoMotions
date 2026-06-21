@@ -69,6 +69,13 @@ class RetargetWindow:
         return self.end - self.start
 
 
+@dataclass(frozen=True)
+class RetargetedMotion:
+    base_frame_pos: onp.ndarray
+    base_frame_wxyz: onp.ndarray
+    joint_angles: onp.ndarray
+
+
 def discover_keypoint_paths(keypoints_folder_path: str | Path) -> list[Path]:
     return sorted(Path(keypoints_folder_path).glob("*.npy"))
 
@@ -128,6 +135,158 @@ def generate_retarget_windows(
         RetargetWindow(start=start, end=min(start + chunk_size_frames, num_frames))
         for start in unique_starts
     ]
+
+
+def _normalize_wxyz(quaternions: onp.ndarray) -> onp.ndarray:
+    norms = onp.linalg.norm(quaternions, axis=-1, keepdims=True)
+    return quaternions / onp.maximum(norms, 1e-8)
+
+
+def _slerp_wxyz(q0: onp.ndarray, q1: onp.ndarray, alpha: onp.ndarray) -> onp.ndarray:
+    q0 = _normalize_wxyz(q0)
+    q1 = _normalize_wxyz(q1)
+    dot = onp.sum(q0 * q1, axis=-1, keepdims=True)
+    q1 = onp.where(dot < 0.0, -q1, q1)
+    dot = onp.abs(dot)
+
+    linear = _normalize_wxyz((1.0 - alpha) * q0 + alpha * q1)
+    theta_0 = onp.arccos(onp.clip(dot, -1.0, 1.0))
+    sin_theta_0 = onp.sin(theta_0)
+    theta = theta_0 * alpha
+    sin_theta = onp.sin(theta)
+    s0 = onp.cos(theta) - dot * sin_theta / onp.maximum(sin_theta_0, 1e-8)
+    s1 = sin_theta / onp.maximum(sin_theta_0, 1e-8)
+    spherical = _normalize_wxyz(s0 * q0 + s1 * q1)
+    return onp.where(dot > 0.9995, linear, spherical)
+
+
+def _align_wxyz_to_reference(
+    quaternions: onp.ndarray,
+    reference: onp.ndarray,
+) -> onp.ndarray:
+    aligned = _normalize_wxyz(quaternions)
+    sign = onp.where(onp.sum(reference * aligned[0], keepdims=True) < 0.0, -1.0, 1.0)
+    return aligned * sign
+
+
+def _align_joint_angles_to_reference(
+    joint_angles: onp.ndarray,
+    reference: onp.ndarray,
+) -> onp.ndarray:
+    aligned = _unwrap_joint_angles(joint_angles)
+    period = 2.0 * onp.pi
+    offset = onp.round((reference - aligned[0]) / period) * period
+    residual = onp.abs(reference - (aligned[0] + offset))
+    likely_wrap = (onp.abs(reference - aligned[0]) > onp.pi) & (
+        residual < onp.pi / 2.0
+    )
+    return aligned + onp.where(likely_wrap, offset, 0.0)
+
+
+def _unwrap_joint_angles(joint_angles: onp.ndarray) -> onp.ndarray:
+    aligned = onp.array(joint_angles, copy=True)
+    period = 2.0 * onp.pi
+    for frame in range(1, aligned.shape[0]):
+        delta = aligned[frame] - aligned[frame - 1]
+        offset = -onp.round(delta / period) * period
+        residual = delta + offset
+        likely_wrap = (onp.abs(delta) > onp.pi) & (onp.abs(residual) < onp.pi / 2.0)
+        aligned[frame:] += onp.where(likely_wrap, offset, 0.0)
+    return aligned
+
+
+def _blend_alpha(overlap_len: int, dtype: onp.dtype) -> onp.ndarray:
+    return onp.arange(overlap_len, dtype=dtype)[:, None] / overlap_len
+
+
+def stitch_retargeted_chunks(
+    *,
+    chunks: list[tuple[RetargetWindow, RetargetedMotion]],
+    total_frames: int,
+) -> RetargetedMotion:
+    if total_frames <= 0:
+        raise ValueError("total_frames must be positive")
+    if not chunks:
+        raise ValueError("chunks must not be empty")
+
+    first_motion = chunks[0][1]
+    base_frame_pos = onp.empty(
+        (total_frames, first_motion.base_frame_pos.shape[1]),
+        dtype=first_motion.base_frame_pos.dtype,
+    )
+    base_frame_wxyz = onp.empty(
+        (total_frames, first_motion.base_frame_wxyz.shape[1]),
+        dtype=first_motion.base_frame_wxyz.dtype,
+    )
+    joint_angles = onp.empty(
+        (total_frames, first_motion.joint_angles.shape[1]),
+        dtype=first_motion.joint_angles.dtype,
+    )
+
+    filled_until = 0
+    for chunk_index, (window, motion) in enumerate(chunks):
+        if window.length != motion.base_frame_pos.shape[0]:
+            raise ValueError(
+                f"chunk {chunk_index} has window length {window.length} but "
+                f"{motion.base_frame_pos.shape[0]} retargeted frames"
+            )
+        if window.start < 0 or window.end > total_frames or window.start >= window.end:
+            raise ValueError(f"invalid chunk window: {window}")
+
+        current_wxyz = _normalize_wxyz(motion.base_frame_wxyz)
+        current_joints = _unwrap_joint_angles(motion.joint_angles)
+        if chunk_index > 0 and window.start < filled_until:
+            current_wxyz = _align_wxyz_to_reference(
+                current_wxyz,
+                base_frame_wxyz[window.start],
+            )
+            current_joints = _align_joint_angles_to_reference(
+                current_joints,
+                joint_angles[window.start],
+            )
+
+        overlap_start = max(window.start, 0)
+        overlap_end = min(window.end, filled_until)
+        if overlap_end > overlap_start:
+            dst = slice(overlap_start, overlap_end)
+            src = slice(overlap_start - window.start, overlap_end - window.start)
+            overlap_len = overlap_end - overlap_start
+            alpha = _blend_alpha(overlap_len, motion.base_frame_pos.dtype)
+            base_frame_pos[dst] = (
+                (1.0 - alpha) * base_frame_pos[dst]
+                + alpha * motion.base_frame_pos[src]
+            )
+            base_frame_wxyz[dst] = _slerp_wxyz(
+                base_frame_wxyz[dst],
+                current_wxyz[src],
+                alpha,
+            )
+            joint_angles[dst] = (
+                (1.0 - alpha) * joint_angles[dst] + alpha * current_joints[src]
+            )
+            copy_start = overlap_end
+        else:
+            copy_start = window.start
+
+        if copy_start < window.end:
+            dst = slice(copy_start, window.end)
+            src = slice(copy_start - window.start, window.end - window.start)
+            base_frame_pos[dst] = motion.base_frame_pos[src]
+            base_frame_wxyz[dst] = current_wxyz[src]
+            joint_angles[dst] = current_joints[src]
+
+        filled_until = max(filled_until, window.end)
+
+    if filled_until != total_frames:
+        raise ValueError(
+            f"stitched chunks filled {filled_until} of {total_frames} frames"
+        )
+
+    return RetargetedMotion(
+        base_frame_pos=base_frame_pos,
+        base_frame_wxyz=_normalize_wxyz(base_frame_wxyz),
+        joint_angles=joint_angles,
+    )
 
 
 def _crossfade_contacts(contact_flags: onp.ndarray, window_size: int = 5) -> onp.ndarray:
