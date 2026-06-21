@@ -394,3 +394,86 @@ def test_stitch_retargeted_chunks_rejects_inconsistent_frame_counts():
             chunks=[(RetargetWindow(start=0, end=2), motion)],
             total_frames=2,
         )
+
+
+def test_stitch_retargeted_chunks_rejects_wrong_base_position_width():
+    motion = _retargeted_motion(
+        positions=np.zeros((2, 1), dtype=np.float32),
+        quaternions=np.tile(np.array([[1.0, 0.0, 0.0, 0.0]]), (2, 1)),
+        joints=np.zeros((2, 1), dtype=np.float32),
+    )
+
+    with pytest.raises(ValueError, match="base_frame_pos must have shape"):
+        stitch_retargeted_chunks(
+            chunks=[(RetargetWindow(start=0, end=2), motion)],
+            total_frames=2,
+        )
+
+
+def test_stitch_retargeted_chunks_rejects_wrong_base_quaternion_width():
+    motion = _retargeted_motion(
+        positions=np.zeros((2, 3), dtype=np.float32),
+        quaternions=np.ones((2, 3), dtype=np.float32),
+        joints=np.zeros((2, 1), dtype=np.float32),
+    )
+
+    with pytest.raises(ValueError, match="base_frame_wxyz must have shape"):
+        stitch_retargeted_chunks(
+            chunks=[(RetargetWindow(start=0, end=2), motion)],
+            total_frames=2,
+        )
+
+
+def test_stitch_retargeted_chunks_rejects_mismatched_joint_widths():
+    first = _retargeted_motion(
+        positions=np.zeros((2, 3), dtype=np.float32),
+        quaternions=np.tile(np.array([[1.0, 0.0, 0.0, 0.0]]), (2, 1)),
+        joints=np.zeros((2, 1), dtype=np.float32),
+    )
+    second = _retargeted_motion(
+        positions=np.zeros((2, 3), dtype=np.float32),
+        quaternions=np.tile(np.array([[1.0, 0.0, 0.0, 0.0]]), (2, 1)),
+        joints=np.zeros((2, 2), dtype=np.float32),
+    )
+
+    with pytest.raises(ValueError, match="joint_angles width must match"):
+        stitch_retargeted_chunks(
+            chunks=[
+                (RetargetWindow(start=0, end=2), first),
+                (RetargetWindow(start=2, end=4), second),
+            ],
+            total_frames=4,
+        )
+
+
+def test_stitch_retargeted_chunks_rejects_zero_quaternion_norm():
+    motion = _retargeted_motion(
+        positions=np.zeros((2, 3), dtype=np.float32),
+        quaternions=np.zeros((2, 4), dtype=np.float32),
+        joints=np.zeros((2, 1), dtype=np.float32),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="base_frame_wxyz contains invalid quaternions",
+    ):
+        stitch_retargeted_chunks(
+            chunks=[(RetargetWindow(start=0, end=2), motion)],
+            total_frames=2,
+        )
+
+
+def test_stitch_retargeted_chunks_rejects_non_finite_values():
+    positions = np.zeros((2, 3), dtype=np.float32)
+    positions[1, 0] = np.nan
+    motion = _retargeted_motion(
+        positions=positions,
+        quaternions=np.tile(np.array([[1.0, 0.0, 0.0, 0.0]]), (2, 1)),
+        joints=np.zeros((2, 1), dtype=np.float32),
+    )
+
+    with pytest.raises(ValueError, match="must contain only finite values"):
+        stitch_retargeted_chunks(
+            chunks=[(RetargetWindow(start=0, end=2), motion)],
+            total_frames=2,
+        )

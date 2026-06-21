@@ -137,9 +137,66 @@ def generate_retarget_windows(
     ]
 
 
+_QUATERNION_NORM_EPS = 1e-8
+
+
+def _require_finite(array_name: str, values: onp.ndarray) -> None:
+    if not onp.all(onp.isfinite(values)):
+        raise ValueError(f"{array_name} must contain only finite values")
+
+
+def _validate_retarget_window(window: RetargetWindow, total_frames: int) -> None:
+    if window.start < 0 or window.end > total_frames or window.start >= window.end:
+        raise ValueError(f"invalid chunk window: {window}")
+
+
+def _validate_retargeted_motion(
+    window: RetargetWindow,
+    motion: RetargetedMotion,
+    *,
+    chunk_index: int,
+    expected_joint_dim: int | None = None,
+) -> int:
+    if motion.base_frame_pos.ndim != 2 or motion.base_frame_pos.shape[1] != 3:
+        raise ValueError("base_frame_pos must have shape (frames, 3)")
+    if motion.base_frame_wxyz.ndim != 2 or motion.base_frame_wxyz.shape[1] != 4:
+        raise ValueError("base_frame_wxyz must have shape (frames, 4)")
+    if motion.joint_angles.ndim != 2:
+        raise ValueError("joint_angles must have shape (frames, joints)")
+
+    frame_counts = (
+        motion.base_frame_pos.shape[0],
+        motion.base_frame_wxyz.shape[0],
+        motion.joint_angles.shape[0],
+    )
+    if any(frame_count != window.length for frame_count in frame_counts):
+        raise ValueError(
+            f"chunk {chunk_index} has inconsistent frame counts: "
+            f"window length {window.length}, "
+            f"base_frame_pos {frame_counts[0]}, "
+            f"base_frame_wxyz {frame_counts[1]}, "
+            f"joint_angles {frame_counts[2]}"
+        )
+
+    _require_finite("base_frame_pos", motion.base_frame_pos)
+    _require_finite("base_frame_wxyz", motion.base_frame_wxyz)
+    _require_finite("joint_angles", motion.joint_angles)
+    quaternion_norms = onp.linalg.norm(motion.base_frame_wxyz, axis=-1)
+    if onp.any(quaternion_norms <= _QUATERNION_NORM_EPS):
+        raise ValueError("base_frame_wxyz contains invalid quaternions")
+
+    joint_dim = motion.joint_angles.shape[1]
+    if expected_joint_dim is not None and joint_dim != expected_joint_dim:
+        raise ValueError("joint_angles width must match")
+    return joint_dim
+
+
 def _normalize_wxyz(quaternions: onp.ndarray) -> onp.ndarray:
+    _require_finite("base_frame_wxyz", quaternions)
     norms = onp.linalg.norm(quaternions, axis=-1, keepdims=True)
-    return quaternions / onp.maximum(norms, 1e-8)
+    if onp.any(norms <= _QUATERNION_NORM_EPS):
+        raise ValueError("base_frame_wxyz contains invalid quaternions")
+    return quaternions / norms
 
 
 def _slerp_wxyz(q0: onp.ndarray, q1: onp.ndarray, alpha: onp.ndarray) -> onp.ndarray:
@@ -209,37 +266,35 @@ def stitch_retargeted_chunks(
     if not chunks:
         raise ValueError("chunks must not be empty")
 
-    first_motion = chunks[0][1]
+    first_window, first_motion = chunks[0]
+    _validate_retarget_window(first_window, total_frames)
+    joint_dim = _validate_retargeted_motion(
+        first_window,
+        first_motion,
+        chunk_index=0,
+    )
     base_frame_pos = onp.empty(
-        (total_frames, first_motion.base_frame_pos.shape[1]),
+        (total_frames, 3),
         dtype=first_motion.base_frame_pos.dtype,
     )
     base_frame_wxyz = onp.empty(
-        (total_frames, first_motion.base_frame_wxyz.shape[1]),
+        (total_frames, 4),
         dtype=first_motion.base_frame_wxyz.dtype,
     )
     joint_angles = onp.empty(
-        (total_frames, first_motion.joint_angles.shape[1]),
+        (total_frames, joint_dim),
         dtype=first_motion.joint_angles.dtype,
     )
 
     filled_until = 0
     for chunk_index, (window, motion) in enumerate(chunks):
-        if window.start < 0 or window.end > total_frames or window.start >= window.end:
-            raise ValueError(f"invalid chunk window: {window}")
-        frame_counts = (
-            motion.base_frame_pos.shape[0],
-            motion.base_frame_wxyz.shape[0],
-            motion.joint_angles.shape[0],
+        _validate_retarget_window(window, total_frames)
+        _validate_retargeted_motion(
+            window,
+            motion,
+            chunk_index=chunk_index,
+            expected_joint_dim=joint_dim,
         )
-        if any(frame_count != window.length for frame_count in frame_counts):
-            raise ValueError(
-                f"chunk {chunk_index} has inconsistent frame counts: "
-                f"window length {window.length}, "
-                f"base_frame_pos {frame_counts[0]}, "
-                f"base_frame_wxyz {frame_counts[1]}, "
-                f"joint_angles {frame_counts[2]}"
-            )
         if window.start > filled_until:
             raise ValueError("chunk windows must cover frames contiguously")
 
