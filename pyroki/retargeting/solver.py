@@ -354,6 +354,45 @@ def stitch_retargeted_chunks(
     )
 
 
+def print_chunk_boundary_diagnostics(
+    chunks: list[tuple[RetargetWindow, RetargetedMotion]],
+) -> None:
+    for prev, curr in zip(chunks, chunks[1:]):
+        prev_window, prev_motion = prev
+        curr_window, curr_motion = curr
+        boundary = curr_window.start
+        prev_idx = boundary - prev_window.start
+        curr_idx = 0
+        if 0 <= prev_idx < prev_motion.base_frame_pos.shape[0]:
+            root_jump = onp.linalg.norm(
+                prev_motion.base_frame_pos[prev_idx]
+                - curr_motion.base_frame_pos[curr_idx]
+            )
+            quat_dot = onp.abs(
+                onp.dot(
+                    _normalize_wxyz(prev_motion.base_frame_wxyz[prev_idx]),
+                    _normalize_wxyz(curr_motion.base_frame_wxyz[curr_idx]),
+                )
+            )
+            root_angle = 2.0 * onp.arccos(onp.clip(quat_dot, -1.0, 1.0))
+            joint_jump = onp.max(
+                onp.abs(
+                    _align_joint_angles_to_reference(
+                        curr_motion.joint_angles,
+                        prev_motion.joint_angles[prev_idx],
+                    )[0]
+                    - prev_motion.joint_angles[prev_idx]
+                )
+            )
+            print(
+                "Chunk boundary diagnostics "
+                f"frame={boundary}: "
+                f"root_pos_jump={root_jump:.6f}, "
+                f"root_angle_jump={root_angle:.6f}, "
+                f"max_joint_jump={joint_jump:.6f}"
+            )
+
+
 def _crossfade_contacts(contact_flags: onp.ndarray, window_size: int = 5) -> onp.ndarray:
     smoothed = onp.zeros_like(contact_flags)
     for i in range(len(contact_flags)):
@@ -502,6 +541,16 @@ def save_contact_labels(
     foot_contacts = onp.stack([left_contacts, right_contacts], axis=-1)
     onp.savez_compressed(output_path, foot_contacts=foot_contacts)
     print(f"Saved contact labels to {output_path} with shape {foot_contacts.shape}")
+
+
+def slice_motion_data(motion_data: MotionData, window: RetargetWindow) -> MotionData:
+    return MotionData(
+        keypoints=motion_data.keypoints[window.start : window.end],
+        orientations=motion_data.orientations[window.start : window.end],
+        left_foot_contact=motion_data.left_foot_contact[window.start : window.end],
+        right_foot_contact=motion_data.right_foot_contact[window.start : window.end],
+        num_timesteps=window.length,
+    )
 
 
 def get_robot_retarget_indices(
@@ -760,6 +809,131 @@ def run_visualizer(
         time.sleep(options.subsample_factor / options.input_fps)
 
 
+def solve_motion_data_retargeting(
+    *,
+    robot,
+    robot_coll,
+    link_names: tuple[str, ...],
+    source_names: tuple[str, ...],
+    joint_retarget_indices,
+    retarget_mask,
+    config: PyrokiRetargetConfig,
+    motion_data: MotionData,
+    subsample_factor: int,
+    input_fps: float,
+) -> RetargetedMotion:
+    ts_world_root, joints = solve_retargeting(
+        robot=robot,
+        robot_coll=robot_coll,
+        target_keypoints=motion_data.keypoints,
+        target_orientations=motion_data.orientations,
+        left_foot_contact=motion_data.left_foot_contact,
+        right_foot_contact=motion_data.right_foot_contact,
+        joint_retarget_indices=joint_retarget_indices,
+        retarget_mask=retarget_mask,
+        source_names=source_names,
+        link_names=link_names,
+        config=config,
+        subsample_factor=subsample_factor,
+        input_fps=input_fps,
+    )
+    return RetargetedMotion(
+        base_frame_pos=onp.array(
+            ts_world_root.wxyz_xyz[: motion_data.num_timesteps, 4:]
+        ),
+        base_frame_wxyz=onp.array(
+            ts_world_root.wxyz_xyz[: motion_data.num_timesteps, :4]
+        ),
+        joint_angles=onp.array(joints[: motion_data.num_timesteps]),
+    )
+
+
+def solve_motion_data_with_optional_chunking(
+    *,
+    robot,
+    robot_coll,
+    link_names: tuple[str, ...],
+    source_names: tuple[str, ...],
+    joint_retarget_indices,
+    retarget_mask,
+    config: PyrokiRetargetConfig,
+    motion_data: MotionData,
+    options,
+) -> RetargetedMotion:
+    if not options.chunk_long_motions:
+        return solve_motion_data_retargeting(
+            robot=robot,
+            robot_coll=robot_coll,
+            link_names=link_names,
+            source_names=source_names,
+            joint_retarget_indices=joint_retarget_indices,
+            retarget_mask=retarget_mask,
+            config=config,
+            motion_data=motion_data,
+            subsample_factor=options.subsample_factor,
+            input_fps=options.input_fps,
+        )
+
+    windows = generate_retarget_windows(
+        num_frames=motion_data.num_timesteps,
+        chunk_threshold_frames=options.chunk_threshold_frames,
+        chunk_size_frames=options.chunk_size_frames,
+        chunk_overlap_frames=options.chunk_overlap_frames,
+    )
+    if len(windows) == 1:
+        return solve_motion_data_retargeting(
+            robot=robot,
+            robot_coll=robot_coll,
+            link_names=link_names,
+            source_names=source_names,
+            joint_retarget_indices=joint_retarget_indices,
+            retarget_mask=retarget_mask,
+            config=config,
+            motion_data=motion_data,
+            subsample_factor=options.subsample_factor,
+            input_fps=options.input_fps,
+        )
+
+    print(
+        "Chunking long motion into "
+        f"{len(windows)} chunks: "
+        f"size={options.chunk_size_frames}, "
+        f"overlap={options.chunk_overlap_frames}"
+    )
+    chunks = []
+    for chunk_index, window in enumerate(windows):
+        print(
+            f"Retargeting chunk {chunk_index + 1}/{len(windows)}: "
+            f"frames [{window.start}, {window.end})"
+        )
+        try:
+            chunk_motion = solve_motion_data_retargeting(
+                robot=robot,
+                robot_coll=robot_coll,
+                link_names=link_names,
+                source_names=source_names,
+                joint_retarget_indices=joint_retarget_indices,
+                retarget_mask=retarget_mask,
+                config=config,
+                motion_data=slice_motion_data(motion_data, window),
+                subsample_factor=options.subsample_factor,
+                input_fps=options.input_fps,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed retargeting chunk {chunk_index + 1}/{len(windows)} "
+                f"for frame range [{window.start}, {window.end})"
+            ) from exc
+        chunks.append((window, chunk_motion))
+
+    stitched = stitch_retargeted_chunks(
+        chunks=chunks,
+        total_frames=motion_data.num_timesteps,
+    )
+    print_chunk_boundary_diagnostics(chunks)
+    return stitched
+
+
 def run_non_visualized_batch(
     config: PyrokiRetargetConfig,
     options,
@@ -791,29 +965,21 @@ def run_non_visualized_batch(
             subsample_factor=options.subsample_factor,
             target_raw_frames=options.target_raw_frames,
         )
-        ts_world_root, joints = solve_retargeting(
+        retargeted_motion = solve_motion_data_with_optional_chunking(
             robot=robot,
             robot_coll=robot_coll,
-            target_keypoints=motion_data.keypoints,
-            target_orientations=motion_data.orientations,
-            left_foot_contact=motion_data.left_foot_contact,
-            right_foot_contact=motion_data.right_foot_contact,
+            link_names=link_names,
+            source_names=source_names,
             joint_retarget_indices=joint_retarget_indices,
             retarget_mask=retarget_mask,
-            source_names=source_names,
-            link_names=link_names,
             config=config,
-            subsample_factor=options.subsample_factor,
-            input_fps=options.input_fps,
+            motion_data=motion_data,
+            options=options,
         )
         results_to_save = {
-            "base_frame_pos": onp.array(
-                ts_world_root.wxyz_xyz[: motion_data.num_timesteps, 4:]
-            ),
-            "base_frame_wxyz": onp.array(
-                ts_world_root.wxyz_xyz[: motion_data.num_timesteps, :4]
-            ),
-            "joint_angles": onp.array(joints[: motion_data.num_timesteps]),
+            "base_frame_pos": retargeted_motion.base_frame_pos,
+            "base_frame_wxyz": retargeted_motion.base_frame_wxyz,
+            "joint_angles": retargeted_motion.joint_angles,
         }
         onp.savez_compressed(output_path, **results_to_save)
         print(f"Saved retargeted motion to {output_path}")
