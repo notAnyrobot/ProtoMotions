@@ -1,6 +1,6 @@
-# Newton + PyRoki Docker Workflow
+# Newton / IsaacLab + PyRoki Docker Workflow
 
-The Newton launchers are intentionally small. They open an interactive container
+The Docker launchers are intentionally small. They open an interactive container
 with the ProtoMotions checkout, sibling PyRoki checkout, the full
 `motion_datasets` root, GPU devices, and cache paths mounted. Validation,
 retargeting, conversion, packaging, and policy training are normal commands that
@@ -18,6 +18,12 @@ HPC:
 
 ```bash
 PROTO_HPC_GPUS=7 ./scripts/docker/launch_newton_docker_hpc.sh
+```
+
+IsaacLab backend on HPC:
+
+```bash
+PROTO_DATASET_READONLY=0 PROTO_HPC_GPUS=7 ./scripts/docker/launch_isaaclab_docker_hpc.sh
 ```
 
 The dataset mount defaults to the parent `motion_datasets` directory so source
@@ -88,78 +94,114 @@ PY
 python pyroki/batch_retarget_from_keypoints.py --help
 ```
 
-## PyRoki Retargeting
+## IsaacLab HPC PyRoki Retargeting
 
-Choose the mounted dataset root for the host, then point commands at the
-specific source and output subtrees:
+Use this workflow inside the IsaacLab backend container when retargeting AMASS
+MotionLib `.pt` files to Astro. ProtoMotions steps must run with IsaacLab's
+Python launcher, while PyRoki steps must run with the separate PyRoki venv.
+
+Run the convenience script from inside the container:
 
 ```bash
-# Workstation
-MOTION_DATASETS=/media/android/data/motion_datasets
+cd /workspace/protomotions
 
-# HPC
+./scripts/docker/retarget_amass_isaaclab_hpc.sh [split] [robot] [skip_freq]
+```
+
+Arguments are optional. Defaults are `split=test`, `robot=astro`, and
+`skip_freq=1`.
+
+Examples:
+
+```bash
+./scripts/docker/retarget_amass_isaaclab_hpc.sh
+./scripts/docker/retarget_amass_isaaclab_hpc.sh test astro 50
+./scripts/docker/retarget_amass_isaaclab_hpc.sh train astro 1
+```
+
+The script looks for packaged AMASS input in `smpl/<split>/` first, then falls
+back to the flat layout:
+
+```text
+/data/share/motion_datasets/protomotions/smpl/<split>/amass_smpl_<split>.pt
+/data/share/motion_datasets/protomotions/smpl/amass_smpl_<split>.pt
+```
+
+It writes split-aware outputs:
+
+```text
+/data/share/motion_datasets/protomotions/smpl/<split>/keypoints-for-retarget/
+/data/share/motion_datasets/protomotions/smpl/<split>/contacts/
+/data/share/motion_datasets/protomotions/<robot>/<split>/pyroki-retargeted-<robot>/
+/data/share/motion_datasets/protomotions/<robot>/<split>/proto-<robot>/
+/data/share/motion_datasets/protomotions/<robot>/<split>/proto-<robot>.pt
+```
+
+Useful overrides:
+
+```bash
 MOTION_DATASETS=/data/share/motion_datasets
-
-DATA=$MOTION_DATASETS/protomotions
-AMASS=$MOTION_DATASETS/amass_smpl+hg
-SPLIT=test
+PROTO_RETARGET_ROOT=$MOTION_DATASETS/protomotions
+PROTO_AMASS_PT=/path/to/amass_smpl_test.pt
+PROTO_PYTHON=/path/to/protomotions/python
+PROTO_ISAACLAB_LAUNCHER=/workspace/isaaclab/isaaclab.sh
+PYROKI_PYTHON=/workspace/pyroki-venv/bin/python
+PROTO_PYROKI_REPO=/workspace/pyroki
 ```
 
-The AMASS source YAMLs remain usable at the source path:
+Long-motion retargeting is enabled by default in the HPC helper. Motions at or
+below the threshold use the original full-trajectory PyRoki solve. Motions above
+the threshold are solved in overlapping windows, then stitched back into one
+`*_retargeted.npz` file. The final `.motion` files and packaged `.pt` MotionLib
+preserve one entry per original AMASS motion.
+
+Default chunking values:
 
 ```bash
-python protomotions/components/motion_lib.py \
-  --motion-path "$AMASS/amass_smpl_train.yaml" \
-  --output-file "$DATA/smpl/motion_lib/amass_smpl_train.pt"
+PROTO_CHUNK_THRESHOLD_FRAMES=900
+PROTO_CHUNK_SIZE_FRAMES=450
+PROTO_CHUNK_OVERLAP_FRAMES=60
 ```
 
-Retarget keypoints to Astro:
+For AMASS MotionLibs that are effectively 60 FPS, override both pipeline FPS
+values explicitly:
+
+```bash
+PROTO_INPUT_FPS=60 PROTO_OUTPUT_FPS=60 ./scripts/docker/retarget_amass_isaaclab_hpc.sh train astro 1
+```
+
+This keeps PyRoki velocity costs and converter timing aligned with the source
+cadence.
+
+Resume behavior follows PyRoki's `--skip-existing` semantics at the final
+`*_retargeted.npz` level. If the final file already exists, the helper skips
+that source motion. If the final file is absent, the helper recomputes any
+required long-motion chunking internally and writes one final retargeted file.
+
+For orientation, the helper wraps the same core PyRoki retarget, ProtoMotions
+conversion, and MotionLib packaging commands:
 
 ```bash
 python pyroki/batch_retarget_from_keypoints.py \
   --robot-type astro \
-  --subsample-factor 1 \
-  --keypoints-folder-path "$DATA/smpl/keypoints-for-retarget/$SPLIT" \
-  --source-type smpl \
-  --output-dir "$DATA/astro/pyroki-retargeted/$SPLIT" \
-  --no-visualize \
+  --keypoints-folder-path "$PROTO_RETARGET_ROOT/smpl/<split>/keypoints-for-retarget" \
   --skip-existing
-```
 
-Generate or refresh contact labels:
-
-```bash
-python pyroki/batch_retarget_from_keypoints.py \
-  --robot-type astro \
-  --subsample-factor 1 \
-  --keypoints-folder-path "$DATA/smpl/keypoints-for-retarget/$SPLIT" \
-  --source-type smpl \
-  --save-contacts-only \
-  --contacts-dir "$DATA/smpl/contacts/$SPLIT" \
-  --skip-existing
-```
-
-Convert PyRoki output to ProtoMotions motion files:
-
-```bash
 python data/scripts/convert_pyroki_retargeted_robot_motions_to_proto.py \
-  --retargeted-motion-dir "$DATA/astro/pyroki-retargeted/$SPLIT" \
-  --output-dir "$DATA/astro/proto/$SPLIT" \
-  --robot-type astro \
-  --contact-labels-dir "$DATA/smpl/contacts/$SPLIT" \
-  --input-fps 30 \
-  --output-fps 30 \
-  --apply-motion-filter \
-  --force-remake
-```
+  --retargeted-motion-dir "$PROTO_RETARGET_ROOT/astro/<split>/pyroki-retargeted-astro" \
+  --output-dir "$PROTO_RETARGET_ROOT/astro/<split>/proto-astro" \
+  --input-fps "$PROTO_INPUT_FPS" \
+  --output-fps "$PROTO_OUTPUT_FPS"
 
-Package the converted motions into a MotionLib `.pt` file:
-
-```bash
 python protomotions/components/motion_lib.py \
-  --motion-path "$DATA/astro/proto/$SPLIT" \
-  --output-file "$DATA/astro/proto/amass-$SPLIT.pt"
+  --motion-path "$PROTO_RETARGET_ROOT/astro/<split>/proto-astro" \
+  --output-file "$PROTO_RETARGET_ROOT/astro/<split>/proto-astro.pt"
 ```
+
+The script deliberately calls `/workspace/isaaclab/isaaclab.sh -p` for
+ProtoMotions steps instead of resolving `python` from the shell. In the IsaacLab
+container, `python` may be a bash alias to an Isaac Sim helper rather than an
+executable path.
 
 ## Policy Training
 
