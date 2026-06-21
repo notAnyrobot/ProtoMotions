@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import pytest
 
 PYROKI_SCRIPT_DIR = Path(__file__).resolve().parents[1]
 if str(PYROKI_SCRIPT_DIR) not in sys.path:
@@ -11,12 +12,15 @@ if str(PYROKI_SCRIPT_DIR) not in sys.path:
 from retargeting.config import AlignmentPair
 from retargeting.factory import get_retarget_config
 from retargeting.solver import (
+    RetargetWindow,
     build_retarget_mask,
     discover_keypoint_paths,
+    generate_retarget_windows,
     get_robot_retarget_indices,
     load_motion_data,
     retargeted_output_path,
     save_contact_labels,
+    validate_chunk_parameters,
 )
 
 
@@ -192,3 +196,71 @@ def test_build_retarget_mask_is_symmetric_and_uses_pair_weights():
     assert float(mask[left_shoulder, left_elbow]) == non_unit_weight
     assert float(mask[left_elbow, left_shoulder]) == non_unit_weight
     assert float(mask[pelvis, left_shoulder]) == 0.0
+
+
+def test_validate_chunk_parameters_rejects_invalid_values():
+    with pytest.raises(ValueError, match="chunk_size_frames must be positive"):
+        validate_chunk_parameters(
+            chunk_threshold_frames=900,
+            chunk_size_frames=0,
+            chunk_overlap_frames=60,
+        )
+
+    with pytest.raises(ValueError, match="chunk_overlap_frames must be non-negative"):
+        validate_chunk_parameters(
+            chunk_threshold_frames=900,
+            chunk_size_frames=450,
+            chunk_overlap_frames=-1,
+        )
+
+    with pytest.raises(ValueError, match="chunk_overlap_frames must be smaller"):
+        validate_chunk_parameters(
+            chunk_threshold_frames=900,
+            chunk_size_frames=450,
+            chunk_overlap_frames=450,
+        )
+
+    with pytest.raises(ValueError, match="chunk_threshold_frames must be at least"):
+        validate_chunk_parameters(
+            chunk_threshold_frames=449,
+            chunk_size_frames=450,
+            chunk_overlap_frames=60,
+        )
+
+
+def test_generate_retarget_windows_keeps_short_motion_as_one_window():
+    windows = generate_retarget_windows(
+        num_frames=900,
+        chunk_threshold_frames=900,
+        chunk_size_frames=450,
+        chunk_overlap_frames=60,
+    )
+
+    assert windows == [RetargetWindow(start=0, end=900)]
+
+
+def test_generate_retarget_windows_chunks_long_motion_with_overlap():
+    windows = generate_retarget_windows(
+        num_frames=1200,
+        chunk_threshold_frames=900,
+        chunk_size_frames=450,
+        chunk_overlap_frames=60,
+    )
+
+    assert windows == [
+        RetargetWindow(start=0, end=450),
+        RetargetWindow(start=390, end=840),
+        RetargetWindow(start=750, end=1200),
+    ]
+    assert all(window.end > window.start for window in windows)
+    assert windows[-1].end == 1200
+
+
+def test_generate_retarget_windows_rejects_empty_motion():
+    with pytest.raises(ValueError, match="num_frames must be positive"):
+        generate_retarget_windows(
+            num_frames=0,
+            chunk_threshold_frames=900,
+            chunk_size_frames=450,
+            chunk_overlap_frames=60,
+        )

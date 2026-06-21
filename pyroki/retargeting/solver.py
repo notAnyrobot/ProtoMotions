@@ -59,6 +59,16 @@ class MotionData:
     num_timesteps: int
 
 
+@dataclass(frozen=True)
+class RetargetWindow:
+    start: int
+    end: int
+
+    @property
+    def length(self) -> int:
+        return self.end - self.start
+
+
 def discover_keypoint_paths(keypoints_folder_path: str | Path) -> list[Path]:
     return sorted(Path(keypoints_folder_path).glob("*.npy"))
 
@@ -71,6 +81,53 @@ def retargeted_output_path(output_dir: str | Path, motion_path: str | Path) -> P
 def contacts_output_path(contacts_dir: str | Path, motion_path: str | Path) -> Path:
     base_filename = Path(motion_path).stem
     return Path(contacts_dir) / f"{base_filename}_contacts.npz"
+
+
+def validate_chunk_parameters(
+    *,
+    chunk_threshold_frames: int,
+    chunk_size_frames: int,
+    chunk_overlap_frames: int,
+) -> None:
+    if chunk_size_frames <= 0:
+        raise ValueError("chunk_size_frames must be positive")
+    if chunk_overlap_frames < 0:
+        raise ValueError("chunk_overlap_frames must be non-negative")
+    if chunk_overlap_frames >= chunk_size_frames:
+        raise ValueError("chunk_overlap_frames must be smaller than chunk_size_frames")
+    if chunk_threshold_frames < chunk_size_frames:
+        raise ValueError("chunk_threshold_frames must be at least chunk_size_frames")
+
+
+def generate_retarget_windows(
+    *,
+    num_frames: int,
+    chunk_threshold_frames: int,
+    chunk_size_frames: int,
+    chunk_overlap_frames: int,
+) -> list[RetargetWindow]:
+    if num_frames <= 0:
+        raise ValueError("num_frames must be positive")
+    validate_chunk_parameters(
+        chunk_threshold_frames=chunk_threshold_frames,
+        chunk_size_frames=chunk_size_frames,
+        chunk_overlap_frames=chunk_overlap_frames,
+    )
+
+    if num_frames <= chunk_threshold_frames:
+        return [RetargetWindow(start=0, end=num_frames)]
+
+    stride = chunk_size_frames - chunk_overlap_frames
+    starts = list(range(0, max(num_frames - chunk_size_frames + 1, 1), stride))
+    final_start = max(0, num_frames - chunk_size_frames)
+    if not starts or starts[-1] != final_start:
+        starts.append(final_start)
+
+    unique_starts = sorted(set(starts))
+    return [
+        RetargetWindow(start=start, end=min(start + chunk_size_frames, num_frames))
+        for start in unique_starts
+    ]
 
 
 def _crossfade_contacts(contact_flags: onp.ndarray, window_size: int = 5) -> onp.ndarray:
@@ -227,30 +284,36 @@ def get_robot_retarget_indices(
     config: PyrokiRetargetConfig,
     link_names: list[str] | tuple[str, ...],
 ):
-    import jax.numpy as jnp
-
     source_names: list[str] = []
     robot_indices: list[int] = []
     for mapping in config.link_mapping:
         source_names.append(mapping.source_keypoint)
         robot_indices.append(link_names.index(mapping.robot_link))
-    return tuple(source_names), jnp.array(robot_indices)
+    array_module = jnp if jnp is not None else onp
+    return tuple(source_names), array_module.array(robot_indices)
 
 
 def build_retarget_mask(config: PyrokiRetargetConfig, source_names: tuple[str, ...]):
-    import jax.numpy as jnp
-
     n_retarget = len(source_names)
-    retarget_mask = jnp.zeros((n_retarget, n_retarget))
+    if jnp is not None:
+        retarget_mask = jnp.zeros((n_retarget, n_retarget))
+        for pair in config.local_alignment_pairs:
+            retarget_idx_a = source_names.index(pair.source_a)
+            retarget_idx_b = source_names.index(pair.source_b)
+            retarget_mask = retarget_mask.at[retarget_idx_a, retarget_idx_b].set(
+                pair.weight
+            )
+            retarget_mask = retarget_mask.at[retarget_idx_b, retarget_idx_a].set(
+                pair.weight
+            )
+        return retarget_mask
+
+    retarget_mask = onp.zeros((n_retarget, n_retarget))
     for pair in config.local_alignment_pairs:
         retarget_idx_a = source_names.index(pair.source_a)
         retarget_idx_b = source_names.index(pair.source_b)
-        retarget_mask = retarget_mask.at[retarget_idx_a, retarget_idx_b].set(
-            pair.weight
-        )
-        retarget_mask = retarget_mask.at[retarget_idx_b, retarget_idx_a].set(
-            pair.weight
-        )
+        retarget_mask[retarget_idx_a, retarget_idx_b] = pair.weight
+        retarget_mask[retarget_idx_b, retarget_idx_a] = pair.weight
     return retarget_mask
 
 
