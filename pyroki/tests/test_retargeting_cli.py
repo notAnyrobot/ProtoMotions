@@ -39,6 +39,13 @@ def test_parser_accepts_existing_args_plus_robot_type(tmp_path):
             str(tmp_path / "contacts"),
             "--input-fps",
             "60",
+            "--chunk-long-motions",
+            "--chunk-threshold-frames",
+            "1200",
+            "--chunk-size-frames",
+            "600",
+            "--chunk-overlap-frames",
+            "90",
             "--no-visualize",
         ]
     )
@@ -54,6 +61,10 @@ def test_parser_accepts_existing_args_plus_robot_type(tmp_path):
     assert args.contacts_dir == str(tmp_path / "contacts")
     assert args.input_fps == 60.0
     assert args.visualize is False
+    assert args.chunk_long_motions is True
+    assert args.chunk_threshold_frames == 1200
+    assert args.chunk_size_frames == 600
+    assert args.chunk_overlap_frames == 90
 
 
 def test_parser_defaults_robot_type_to_g1(tmp_path):
@@ -123,6 +134,10 @@ def test_main_builds_config_and_options(monkeypatch, tmp_path):
         contacts_dir=None,
         input_fps=30.0,
         visualize=False,
+        chunk_long_motions=False,
+        chunk_threshold_frames=900,
+        chunk_size_frames=450,
+        chunk_overlap_frames=60,
     )
 
 
@@ -147,6 +162,30 @@ def test_main_uses_g1_config_when_robot_type_is_omitted(monkeypatch, tmp_path):
     assert result == 0
     assert captured["config"] == get_retarget_config("g1")
     assert captured["options"].keypoints_folder_path == tmp_path / "keypoints"
+
+
+def test_main_rejects_invalid_chunk_options(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "pyroki/batch_retarget_from_keypoints.py",
+            "--keypoints-folder-path",
+            str(tmp_path / "keypoints"),
+            "--chunk-long-motions",
+            "--chunk-size-frames",
+            "450",
+            "--chunk-overlap-frames",
+            "450",
+        ],
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert (
+        "--chunk-overlap-frames must be smaller than --chunk-size-frames"
+        in result.stderr
+    )
 
 
 def test_canonical_script_help_works_without_pyroki_runtime_import():

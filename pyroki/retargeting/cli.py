@@ -22,6 +22,10 @@ class BatchRetargetingOptions:
     contacts_dir: Path | None
     input_fps: float
     visualize: bool
+    chunk_long_motions: bool
+    chunk_threshold_frames: int
+    chunk_size_frames: int
+    chunk_overlap_frames: int
 
 
 def run_batch_retargeting(
@@ -57,6 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Raw source frames to optimize. Defaults to each motion's full length.",
     )
+    parser.add_argument(
+        "--chunk-long-motions",
+        action="store_true",
+        help="Retarget long motions as overlapping chunks and stitch one output.",
+    )
+    parser.add_argument("--chunk-threshold-frames", type=int, default=900)
+    parser.add_argument("--chunk-size-frames", type=int, default=450)
+    parser.add_argument("--chunk-overlap-frames", type=int, default=60)
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--source-type", default="smpl")
     parser.add_argument("--save-contacts-only", action="store_true")
@@ -66,9 +78,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def validate_cli_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.chunk_size_frames <= 0:
+        parser.error("--chunk-size-frames must be positive")
+    if args.chunk_overlap_frames < 0:
+        parser.error("--chunk-overlap-frames must be non-negative")
+    if args.chunk_overlap_frames >= args.chunk_size_frames:
+        parser.error("--chunk-overlap-frames must be smaller than --chunk-size-frames")
+    if args.chunk_threshold_frames < args.chunk_size_frames:
+        parser.error("--chunk-threshold-frames must be at least --chunk-size-frames")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    validate_cli_args(parser, args)
 
     config = get_retarget_config(args.robot_type)
     if args.urdf_path is not None:
@@ -87,5 +111,9 @@ def main(argv: list[str] | None = None) -> int:
         contacts_dir=Path(args.contacts_dir) if args.contacts_dir is not None else None,
         input_fps=args.input_fps,
         visualize=args.visualize,
+        chunk_long_motions=args.chunk_long_motions,
+        chunk_threshold_frames=args.chunk_threshold_frames,
+        chunk_size_frames=args.chunk_size_frames,
+        chunk_overlap_frames=args.chunk_overlap_frames,
     )
     return run_batch_retargeting(config, options)
