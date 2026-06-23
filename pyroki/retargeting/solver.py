@@ -125,15 +125,13 @@ def generate_retarget_windows(
         return [RetargetWindow(start=0, end=num_frames)]
 
     stride = chunk_size_frames - chunk_overlap_frames
-    starts = list(range(0, max(num_frames - chunk_size_frames + 1, 1), stride))
-    final_start = max(0, num_frames - chunk_size_frames)
-    if not starts or starts[-1] != final_start:
-        starts.append(final_start)
+    starts = [0]
+    while starts[-1] + chunk_size_frames < num_frames:
+        starts.append(starts[-1] + stride)
 
-    unique_starts = sorted(set(starts))
     return [
         RetargetWindow(start=start, end=min(start + chunk_size_frames, num_frames))
-        for start in unique_starts
+        for start in starts
     ]
 
 

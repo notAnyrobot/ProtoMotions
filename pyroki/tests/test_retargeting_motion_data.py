@@ -264,10 +264,28 @@ def test_generate_retarget_windows_chunks_long_motion_with_overlap():
     assert windows == [
         RetargetWindow(start=0, end=450),
         RetargetWindow(start=390, end=840),
-        RetargetWindow(start=750, end=1200),
+        RetargetWindow(start=780, end=1200),
     ]
     assert all(window.end > window.start for window in windows)
     assert windows[-1].end == 1200
+
+
+def test_generate_retarget_windows_keeps_requested_overlap_for_short_tail():
+    windows = generate_retarget_windows(
+        num_frames=4678,
+        chunk_threshold_frames=900,
+        chunk_size_frames=450,
+        chunk_overlap_frames=60,
+    )
+
+    assert windows[-3:] == [
+        RetargetWindow(start=3510, end=3960),
+        RetargetWindow(start=3900, end=4350),
+        RetargetWindow(start=4290, end=4678),
+    ]
+    assert windows[-1].length == 388
+    assert windows[-1].start == windows[-2].end - 60
+    assert windows[-1].end == 4678
 
 
 def test_generate_retarget_windows_rejects_empty_motion():
