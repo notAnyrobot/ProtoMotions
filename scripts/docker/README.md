@@ -6,7 +6,27 @@ with the ProtoMotions checkout, sibling PyRoki checkout, the full
 retargeting, conversion, packaging, and policy training are normal commands that
 you type inside that shell.
 
-## Launch A Container
+## Contents
+
+- [Quick Start](#quick-start)
+  - [Launch A Container](#launch-a-container)
+  - [Run The Retargeting Workflow](#run-the-retargeting-workflow)
+  - [Train A Tracker Policy](#train-a-tracker-policy)
+- [Data Preparation](#data-preparation)
+  - [Pull Prepared Data From HPC](#pull-prepared-data-from-hpc)
+  - [Pull Retargeted Robot Split From HPC](#pull-retargeted-robot-split-from-hpc)
+  - [Push Local Subset Splits To HPC](#push-local-subset-splits-to-hpc)
+- [Retargeting](#retargeting)
+  - [Runtime Check](#runtime-check)
+  - [Canonical HPC PyRoki Retargeting](#canonical-hpc-pyroki-retargeting)
+- [Policy Training](#policy-training)
+- [FAQs](#faqs)
+  - [How Do I Repair Rootless HPC Artifact Ownership?](#how-do-i-repair-rootless-hpc-artifact-ownership)
+  - [Delete and recreate disposable results](#delete-and-recreate-disposable-results)
+
+## Quick Start
+
+### Launch A Container
 
 Workstation:
 
@@ -25,6 +45,12 @@ IsaacLab backend on HPC:
 ```bash
 PROTO_DATASET_READONLY=0 PROTO_HPC_GPUS=7 ./scripts/docker/launch_isaaclab_docker_hpc.sh
 ```
+
+Current HPC operating status: use the Newton backend container for retargeting
+and tracker policy training. The IsaacLab backend container can launch and run
+some utility commands, but tracker training currently hangs during the
+IsaacLab/Isaac Sim launch stage on HPC. There is no active plan to fix the
+IsaacLab HPC training path, so do not use it as the primary training backend.
 
 The dataset mount defaults to the parent `motion_datasets` directory so source
 AMASS data such as `amass_smpl+hg`, generated ProtoMotions artifacts under
@@ -54,7 +80,285 @@ PROTO_HPC_GPUS=4,5,6,7 ./scripts/docker/launch_newton_docker_hpc.sh
 PROTO_HPC_GPU_MODE=gpus PROTO_HPC_GPUS=0 ./scripts/docker/launch_newton_docker_hpc.sh
 ```
 
-## Runtime Check
+### Run The Retargeting Workflow
+
+Inside the retargeting container, run the canonical convenience script from the
+repo root. Newton is the primary HPC container for retargeting and tracker
+training, so the script defaults ProtoMotions steps to plain `python` from
+`PATH` unless you explicitly set `PROTO_PYTHON` or
+`PROTO_ISAACLAB_LAUNCHER`.
+
+```bash
+cd /workspace/protomotions
+
+./scripts/docker/retarget_amass_hpc.sh [split] [robot] [skip_freq]
+```
+
+Arguments are optional. Defaults are `split=test`, `robot=astro`, and
+`skip_freq=1`. The `split` argument can be any simple folder name under
+`smpl/`, including dataset subsets such as `sfu`, `cmu`, and `accad`.
+
+`retarget_amass_isaaclab_hpc.sh is a compatibility wrapper` for older notes and
+jobs. It delegates to `retarget_amass_hpc.sh` and prints a deprecation warning.
+
+Examples:
+
+```bash
+./scripts/docker/retarget_amass_hpc.sh
+./scripts/docker/retarget_amass_hpc.sh test astro 50
+./scripts/docker/retarget_amass_hpc.sh sfu astro 1
+./scripts/docker/retarget_amass_hpc.sh train astro 1
+```
+
+### Train A Tracker Policy
+
+Use the packaged MotionLib file as the motion source. Example Astro Newton run:
+
+```bash
+DATA=/media/android/data/motion_datasets/protomotions
+SPLIT=test
+
+python -u -m protomotions.train_agent \
+  --robot-name astro \
+  --simulator newton \
+  --num-envs 2048 \
+  --batch-size 4096 \
+  --motion-file "$DATA/astro/$SPLIT/proto-astro.pt" \
+  --experiment-path data/pretrained_models/motion_tracker/g1-bones-deploy/experiment_config.py \
+  --experiment-name astro-motion-tracker-newton-container
+```
+
+## Data Preparation
+
+Prepared ProtoMotions datasets live under a shared `protomotions` dataset root.
+The expected roots are:
+
+```bash
+# HPC
+/data/share/motion_datasets/protomotions
+
+# Workstation
+/media/android/data/motion_datasets/protomotions
+```
+
+The current layout is split-aware. SMPL source MotionLibs, extracted keypoints,
+and source contact labels stay under `smpl/<split>/`. Robot-specific retargeted
+data is written under `<robot>/<split>/`.
+
+```text
+protomotions/
+├── smpl/
+│   ├── accad/
+│   │   └── amass_smpl_accad.pt
+│   ├── cmu/
+│   │   └── amass_smpl_cmu.pt
+│   ├── test/
+│   │   ├── amass_smpl_test.pt
+│   │   ├── keypoints-for-retarget/
+│   │   └── contacts/
+│   ├── train/
+│   │   ├── amass_smpl_train.pt
+│   │   ├── keypoints-for-retarget/
+│   │   └── contacts/
+│   └── validation/
+│       ├── amass_smpl_validation.pt
+│       ├── keypoints-for-retarget/
+│       └── contacts/
+├── astro/
+│   ├── test/
+│   │   ├── pyroki-retargeted-astro/
+│   │   ├── proto-astro/
+│   │   └── proto-astro.pt
+│   ├── train/
+│   └── validation/
+└── g1/
+│   ├── test/
+│   ├── train/
+│   └── validation/
+```
+
+Older flat files such as `smpl/amass_smpl_train.pt` should be treated as
+legacy compatibility artifacts once matching split copies exist at
+`smpl/train/amass_smpl_train.pt`.
+
+### Pull Prepared Data From HPC
+
+Use a dry run first. The trailing slash on the source path is important: it
+copies the contents into the matching local directory instead of creating a
+nested directory.
+
+```bash
+REMOTE=atom7@192.168.24.9:/data/share/motion_datasets/protomotions
+LOCAL=/media/android/data/motion_datasets/protomotions
+
+mkdir -p "$LOCAL"
+
+rsync -avhn --stats --itemize-changes \
+  "$REMOTE/smpl/" \
+  "$LOCAL/smpl/"
+```
+
+If the workstation has an SSH alias for the HPC, replace the `REMOTE` host with
+that alias, for example `hpc-1:/data/share/motion_datasets/protomotions`.
+
+If the dry run looks right, pull the prepared SMPL MotionLib inputs, extracted
+keypoints, and contact labels:
+
+```bash
+rsync -avh --info=progress2 --partial \
+  "$REMOTE/smpl/" \
+  "$LOCAL/smpl/"
+```
+
+### Pull Retargeted Robot Split From HPC
+
+For per-split retargeted robot outputs, use the convenience wrapper. It pulls
+the requested HPC folder:
+
+```text
+/data/share/motion_datasets/protomotions/<robot>/<split>/
+```
+
+into the matching workstation folder:
+
+```text
+/media/android/data/motion_datasets/protomotions/<robot>/<split>/
+```
+
+Astro is the default robot, and `--split` is required:
+
+```bash
+./scripts/docker/download_retargeted_motion_from_hpc.sh --split sfu
+./scripts/docker/download_retargeted_motion_from_hpc.sh --robot astro --split sfu
+./scripts/docker/download_retargeted_motion_from_hpc.sh --robot astro --split validation --dry-run
+```
+
+Use `REMOTE_HOST` if this workstation reaches the HPC through an SSH alias:
+
+```bash
+REMOTE_HOST=hpc-1 ./scripts/docker/download_retargeted_motion_from_hpc.sh --split sfu
+```
+
+For a lightweight SMPL pull that only copies packaged `.pt` files and skips
+extracted keypoints/contact labels, sync the split folders without descending
+into keypoint/contact directories:
+
+```bash
+mkdir -p "$LOCAL/smpl"
+
+rsync -avh --info=progress2 --partial \
+  --include='*/' \
+  --include='amass_smpl_*.pt' \
+  --exclude='*' \
+  "$REMOTE/smpl/" \
+  "$LOCAL/smpl/"
+```
+
+Verify a completed transfer by checking the local layout and rerunning the dry
+run. A clean dry run should not list new `>f+++++++++` or `cd+++++++++` entries.
+
+```bash
+ls -lh "$LOCAL/smpl"
+du -sh "$LOCAL/smpl" "$LOCAL/astro" 2>/dev/null || true
+find "$LOCAL/smpl" -maxdepth 2 -type f -name "*.pt" -ls
+
+rsync -avhn --stats --itemize-changes \
+  "$REMOTE/smpl/" \
+  "$LOCAL/smpl/"
+```
+
+These commands intentionally avoid `--delete` so local-only validation artifacts
+or backups are preserved. Use `--delete` only when you want the local directory
+to exactly mirror the HPC source directory.
+
+### Push Local Subset Splits To HPC
+
+Use this when the workstation has prepared dataset-specific SMPL subsets such as
+`accad/`, `cmu/`, or `sfu/`, and the HPC already has clean `train/`, `test`, and
+`validation` splits.
+
+Do not push workstation `train/`, `test`, or `validation` if those folders
+contain stale `contacts/` or `keypoints-for-retarget/` artifacts. Sync only the
+new subset folders that contain packaged `.pt` files.
+
+```bash
+LOCAL=/media/android/data/motion_datasets/protomotions/smpl
+REMOTE_HOST=atom7@192.168.24.9
+REMOTE=/data/share/motion_datasets/protomotions/smpl
+
+SUBSETS=(
+  accad
+  biomotionlab_ntroje
+  bmlhandball
+  bmlmovi
+  cmu
+  dancedb
+  dfaust_67
+  ekut
+  eyes_japan_dataset
+  kit
+  mpi_hdm05
+  mpi_limits
+  mpi_mosh
+  sfu
+  ssm_synced
+  tcd_handmocap
+  totalcapture
+  transitions_mocap
+)
+
+RSYNC_SOURCES=()
+for SPLIT in "${SUBSETS[@]}"; do
+  RSYNC_SOURCES+=("$LOCAL/$SPLIT")
+done
+```
+
+If the remote parent does not exist yet, create it once:
+
+```bash
+ssh "$REMOTE_HOST" "mkdir -p '$REMOTE'"
+```
+
+Then run one `rsync` command for all subset folders. This avoids opening one SSH
+session per subset, which is especially painful on password-authenticated hosts.
+
+Dry run:
+
+```bash
+rsync -avhn --stats --itemize-changes \
+  "${RSYNC_SOURCES[@]}" \
+  "$REMOTE_HOST:$REMOTE/"
+```
+
+Real sync:
+
+```bash
+rsync -avh --info=progress2 --partial \
+  "${RSYNC_SOURCES[@]}" \
+  "$REMOTE_HOST:$REMOTE/"
+```
+
+Verify on HPC:
+
+```bash
+DATA=/data/share/motion_datasets/protomotions/smpl
+
+find "$DATA" -maxdepth 2 -type f -name 'amass_smpl_*.pt' | sort
+```
+
+Expected examples:
+
+```text
+/data/share/motion_datasets/protomotions/smpl/accad/amass_smpl_accad.pt
+/data/share/motion_datasets/protomotions/smpl/cmu/amass_smpl_cmu.pt
+/data/share/motion_datasets/protomotions/smpl/test/amass_smpl_test.pt
+/data/share/motion_datasets/protomotions/smpl/train/amass_smpl_train.pt
+/data/share/motion_datasets/protomotions/smpl/validation/amass_smpl_validation.pt
+```
+
+## Retargeting
+
+### Runtime Check
 
 Inside the container:
 
@@ -94,29 +398,53 @@ PY
 python pyroki/batch_retarget_from_keypoints.py --help
 ```
 
-## IsaacLab HPC PyRoki Retargeting
+### Canonical HPC PyRoki Retargeting
 
-Use this workflow inside the IsaacLab backend container when retargeting AMASS
-MotionLib `.pt` files to Astro. ProtoMotions steps must run with IsaacLab's
-Python launcher, while PyRoki steps must run with the separate PyRoki venv.
+Use this workflow inside the Newton or IsaacLab backend container when
+retargeting AMASS MotionLib `.pt` files to a robot. The canonical script is
+backend-neutral: ProtoMotions steps use `python` from `PATH` by default, and
+IsaacLab launcher use is explicit through `PROTO_ISAACLAB_LAUNCHER` or
+`PROTO_PYTHON`.
 
-Run the convenience script from inside the container:
+PyRoki steps validate `PROTO_PYROKI_REPO` and set
+`PYTHONPATH=$PROTO_PYROKI_REPO/src` so the external PyRoki package wins over any
+repo-local `pyroki` namespace. The batch CLI is resolved from
+`PROTO_PYROKI_BATCH_CLI`, then `$PROTO_PYROKI_REPO/batch_retarget_from_keypoints.py`,
+then the repo-local `pyroki/batch_retarget_from_keypoints.py` helper. This
+matches the Newton container layout where `/workspace/pyroki` can provide the
+package while `/workspace/protomotions/pyroki` provides the ProtoMotions batch
+wrapper.
+
+Run the canonical convenience script from inside the container:
 
 ```bash
 cd /workspace/protomotions
 
-./scripts/docker/retarget_amass_isaaclab_hpc.sh [split] [robot] [skip_freq]
+./scripts/docker/retarget_amass_hpc.sh [split] [robot] [skip_freq]
 ```
 
 Arguments are optional. Defaults are `split=test`, `robot=astro`, and
-`skip_freq=1`.
+`skip_freq=1`. The split can be a standard train/test/validation split or an
+arbitrary subset folder such as `sfu`, `cmu`, or `accad`.
+
+`retarget_amass_isaaclab_hpc.sh is a compatibility wrapper` kept for old
+commands. New commands should call `retarget_amass_hpc.sh` directly.
 
 Examples:
 
 ```bash
-./scripts/docker/retarget_amass_isaaclab_hpc.sh
-./scripts/docker/retarget_amass_isaaclab_hpc.sh test astro 50
-./scripts/docker/retarget_amass_isaaclab_hpc.sh train astro 1
+./scripts/docker/retarget_amass_hpc.sh
+./scripts/docker/retarget_amass_hpc.sh test astro 50
+./scripts/docker/retarget_amass_hpc.sh sfu astro 1
+./scripts/docker/retarget_amass_hpc.sh train astro 1
+```
+
+Small-split SFU smoke:
+
+```bash
+DATA=/data/share/motion_datasets/protomotions
+ls "$DATA/smpl/sfu/amass_smpl_sfu.pt"
+./scripts/docker/retarget_amass_hpc.sh sfu astro 1
 ```
 
 The script looks for packaged AMASS input in `smpl/<split>/` first, then falls
@@ -147,6 +475,7 @@ PROTO_PYTHON=/path/to/protomotions/python
 PROTO_ISAACLAB_LAUNCHER=/workspace/isaaclab/isaaclab.sh
 PYROKI_PYTHON=/workspace/pyroki-venv/bin/python
 PROTO_PYROKI_REPO=/workspace/pyroki
+PROTO_PYROKI_BATCH_CLI=/workspace/protomotions/pyroki/batch_retarget_from_keypoints.py
 ```
 
 Long-motion retargeting is enabled by default in the HPC helper. Motions at or
@@ -167,7 +496,7 @@ For AMASS MotionLibs that are effectively 60 FPS, override both pipeline FPS
 values explicitly:
 
 ```bash
-PROTO_INPUT_FPS=60 PROTO_OUTPUT_FPS=60 ./scripts/docker/retarget_amass_isaaclab_hpc.sh train astro 1
+PROTO_INPUT_FPS=60 PROTO_OUTPUT_FPS=60 ./scripts/docker/retarget_amass_hpc.sh train astro 1
 ```
 
 This keeps PyRoki velocity costs and converter timing aligned with the source
@@ -182,7 +511,7 @@ For orientation, the helper wraps the same core PyRoki retarget, ProtoMotions
 conversion, and MotionLib packaging commands:
 
 ```bash
-python pyroki/batch_retarget_from_keypoints.py \
+PYTHONPATH="$PROTO_PYROKI_REPO/src" python "$PROTO_PYROKI_REPO/batch_retarget_from_keypoints.py" \
   --robot-type astro \
   --keypoints-folder-path "$PROTO_RETARGET_ROOT/smpl/<split>/keypoints-for-retarget" \
   --skip-existing
@@ -198,12 +527,17 @@ python protomotions/components/motion_lib.py \
   --output-file "$PROTO_RETARGET_ROOT/astro/<split>/proto-astro.pt"
 ```
 
-The script deliberately calls `/workspace/isaaclab/isaaclab.sh -p` for
-ProtoMotions steps instead of resolving `python` from the shell. In the IsaacLab
-container, `python` may be a bash alias to an Isaac Sim helper rather than an
-executable path.
+The script deliberately does not auto-select `/workspace/isaaclab/isaaclab.sh`
+just because that path exists. In the Newton container, plain `python` is the
+expected ProtoMotions runner. In an IsaacLab container, set
+`PROTO_ISAACLAB_LAUNCHER=/workspace/isaaclab/isaaclab.sh` when you want
+ProtoMotions steps to run through `isaaclab.sh -p`.
 
 ## Policy Training
+
+Use the Newton backend container for HPC tracker policy training. The IsaacLab
+backend container currently hangs during the launch stage on HPC and is not part
+of the active training workflow.
 
 Use the packaged MotionLib file as the motion source. Example Astro Newton run:
 
@@ -216,7 +550,7 @@ python -u -m protomotions.train_agent \
   --simulator newton \
   --num-envs 2048 \
   --batch-size 4096 \
-  --motion-file "$DATA/astro/proto/amass-$SPLIT.pt" \
+  --motion-file "$DATA/astro/$SPLIT/proto-astro.pt" \
   --experiment-path data/pretrained_models/motion_tracker/g1-bones-deploy/experiment_config.py \
   --experiment-name astro-motion-tracker-newton-container
 ```
@@ -236,13 +570,15 @@ python -u -m protomotions.train_agent \
   --training-max-steps 512
 ```
 
-## Ownership Repair
+## FAQs
+
+### How Do I Repair Rootless HPC Artifact Ownership?
+
+Rootless HPC artifact cleanup depends on the host UID/GID mapping.
 
 The workstation launcher repairs repo-local artifact ownership for `results`,
 `output`, and `wandb` after the shell exits. The HPC launcher leaves this off by
 default because true rootless Docker has different UID mapping behavior.
-
-### Rootless HPC artifact cleanup
 
 For a failed cleanup like `results/smpl-motion-tracker-amass`, verify the owner
 on the HPC host before choosing the fix:
