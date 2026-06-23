@@ -51,7 +51,7 @@ resolve_python_path() {
     fi
 
     if [ ! -f "$python_path" ]; then
-        echo "Error: ${label} Python not found: $input_path"
+        echo "Error: ${label} Python not found: $input_path" >&2
         exit 1
     fi
 

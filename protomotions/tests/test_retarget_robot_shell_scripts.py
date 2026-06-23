@@ -63,6 +63,30 @@ def test_single_motion_wrapper_uses_default_python_paths(tmp_path):
     assert "PyRoki Python not found:" not in result.stdout
 
 
+def test_single_motion_wrapper_reports_missing_proto_python_to_stderr(tmp_path):
+    pyroki_python = _touch_python(tmp_path / "pyroki" / "bin" / "python")
+    motion_file = tmp_path / "input.motion"
+    motion_file.touch()
+
+    missing_proto_python = tmp_path / "missing-proto" / "bin" / "python"
+    result = subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "scripts" / "retarget_single_motion_to_robot.sh"),
+            str(missing_proto_python),
+            str(pyroki_python),
+            str(motion_file),
+            str(tmp_path / "out"),
+            "astro",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert f"Error: ProtoMotions Python not found: {missing_proto_python}" in result.stderr
+
+
 def test_single_motion_wrapper_sets_pyroki_repo_pythonpath(tmp_path):
     proto_python = _write_executable(
         tmp_path / "proto" / "bin" / "python",
@@ -123,6 +147,30 @@ def test_amass_wrapper_accepts_astro_and_pyroki_env_dir(tmp_path):
     assert "Error: AMASS .pt file not found:" in result.stdout
     assert "robot_type must" not in result.stdout
     assert "PyRoki Python not found" not in result.stdout
+
+
+def test_amass_wrapper_reports_missing_proto_python_to_stderr(tmp_path):
+    pyroki_python = _touch_python(tmp_path / "pyroki" / "bin" / "python")
+    amass_file = tmp_path / "protomotions" / "smpl" / "test" / "amass_smpl_test.pt"
+    amass_file.parent.mkdir(parents=True)
+    amass_file.touch()
+
+    missing_proto_python = tmp_path / "missing-proto" / "bin" / "python"
+    result = subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "scripts" / "retarget_amass_to_robot.sh"),
+            str(missing_proto_python),
+            str(pyroki_python),
+            str(amass_file),
+            "astro",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert f"Error: ProtoMotions Python not found: {missing_proto_python}" in result.stderr
 
 
 def test_amass_wrapper_sets_pyroki_repo_pythonpath(tmp_path):
